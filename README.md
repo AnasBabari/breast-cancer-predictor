@@ -22,6 +22,9 @@ A committed **`model.joblib`** is included so you can run the API right after in
 - The form now includes guided workflow steps, quick presets (benign-like / malignant-like), midpoint autofill, and one-click reset.
 - Inputs are auto-saved in browser local storage and restored on reload for a smoother workflow.
 - A JSON payload preview and copy button make API usage easier for beginners.
+- The UI now includes an API status badge, keyboard shortcut support (`Ctrl+Enter`), and per-field range-position hints.
+- New visibility controls let users toggle high-contrast mode, larger text, and reduced motion.
+- Recent prediction history is stored locally and can be reused with one click.
 - UI styling was modernized for readability and accessibility while keeping the app mobile-friendly.
 
 ## UI/UX Feature Guide
@@ -40,6 +43,15 @@ A committed **`model.joblib`** is included so you can run the API right after in
 - Request preview tools:
   - expandable JSON payload preview
   - copy-to-clipboard action once the payload is valid
+- Visibility controls:
+  - high contrast mode
+  - larger text mode
+  - reduced motion mode
+- API status indicator:
+  - shows online/offline/checking state from `/health`
+- Productivity helpers:
+  - keyboard shortcut `Ctrl+Enter` to run prediction
+  - recent prediction history with "Reuse values"
 - Result panel includes confidence level, confidence note, and animated probability bars.
 
 ## Git Ignore Notes

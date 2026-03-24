@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { friendlyOutcomeLabel, hintForFeature } from "./featureHints.js";
 
 const STORAGE_KEY = "bcp:form-values:v1";
+const HISTORY_KEY = "bcp:prediction-history:v1";
+const UI_PREFS_KEY = "bcp:ui-prefs:v1";
 
 const PRESET_VALUES = {
   malignant_like: {
@@ -19,6 +21,25 @@ const PRESET_VALUES = {
     "worst concave points": 0.08,
   },
 };
+
+function formatTimestamp(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Unknown time";
+  return d.toLocaleString();
+}
+
+function TogglePill({ active, onClick, label }) {
+  return (
+    <button
+      type="button"
+      className={`toggle-pill ${active ? "toggle-pill--active" : ""}`}
+      onClick={onClick}
+      aria-pressed={active ? "true" : "false"}
+    >
+      {label}
+    </button>
+  );
+}
 
 async function fetchJson(url, options) {
   const res = await fetch(url, options);
@@ -39,9 +60,13 @@ async function fetchJson(url, options) {
 }
 
 // Animated probability bar that counts up on mount
-function AnimatedBar({ pct, tone }) {
+function AnimatedBar({ pct, tone, reducedMotion }) {
   const [displayed, setDisplayed] = useState(0);
   useEffect(() => {
+    if (reducedMotion) {
+      setDisplayed(pct);
+      return undefined;
+    }
     let frame;
     const start = performance.now();
     const duration = 700;
@@ -53,7 +78,7 @@ function AnimatedBar({ pct, tone }) {
     }
     frame = requestAnimationFrame(step);
     return () => cancelAnimationFrame(frame);
-  }, [pct]);
+  }, [pct, reducedMotion]);
 
   return (
     <div className="bar-row">
@@ -80,7 +105,71 @@ export default function App() {
   const [predictError, setPredictError] = useState(null);
   const [result, setResult] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [apiStatus, setApiStatus] = useState("checking");
+  const [history, setHistory] = useState([]);
+  const [uiPrefs, setUiPrefs] = useState({
+    highContrast: false,
+    largeText: false,
+    reducedMotion: false,
+  });
   const resultRef = useRef(null);
+
+  useEffect(() => {
+    try {
+      const rawPrefs = localStorage.getItem(UI_PREFS_KEY);
+      if (rawPrefs) {
+        const parsed = JSON.parse(rawPrefs);
+        setUiPrefs((prev) => ({
+          ...prev,
+          highContrast: Boolean(parsed.highContrast),
+          largeText: Boolean(parsed.largeText),
+          reducedMotion: Boolean(parsed.reducedMotion),
+        }));
+      }
+    } catch {
+      /* ignore invalid saved prefs */
+    }
+
+    try {
+      const rawHistory = localStorage.getItem(HISTORY_KEY);
+      if (rawHistory) {
+        const parsed = JSON.parse(rawHistory);
+        if (Array.isArray(parsed)) {
+          setHistory(parsed.slice(0, 6));
+        }
+      }
+    } catch {
+      /* ignore invalid saved history */
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(UI_PREFS_KEY, JSON.stringify(uiPrefs));
+  }, [uiPrefs]);
+
+  useEffect(() => {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  }, [history]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function ping() {
+      try {
+        await fetchJson("/health");
+        if (!cancelled) setApiStatus("online");
+      } catch {
+        if (!cancelled) setApiStatus("offline");
+      }
+    }
+
+    ping();
+    const t = setInterval(ping, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -179,6 +268,12 @@ export default function App() {
     setTouched((t) => ({ ...t, [name]: true }));
   }, []);
 
+  const focusNextField = useCallback((nextFieldName) => {
+    if (!nextFieldName) return;
+    const el = document.getElementById(`in-${nextFieldName}`);
+    el?.focus();
+  }, []);
+
   const parseField = useCallback((name) => {
     const s = values[name];
     if (!s || String(s).trim() === "") return { valid: false, value: null };
@@ -222,6 +317,10 @@ export default function App() {
     return featureNames.find((n) => !parseField(n).valid) || null;
   }, [featureNames, parseField]);
 
+  const invalidCount = useMemo(() => {
+    return Math.max(0, featureNames.length - filledCount);
+  }, [featureNames.length, filledCount]);
+
   const payload = useMemo(() => {
     if (!modelInfo || !canSubmit) return null;
     return {
@@ -250,6 +349,15 @@ export default function App() {
           body: JSON.stringify({ features }),
         });
         setResult(data);
+        const entry = {
+          id: Date.now(),
+          at: new Date().toISOString(),
+          label: data.label,
+          confidence_level: data.confidence_level,
+          probability: data.probability,
+          features,
+        };
+        setHistory((prev) => [entry, ...prev].slice(0, 6));
         setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
       } catch (e) {
         setPredictError(e instanceof Error ? e.message : String(e));
@@ -271,12 +379,52 @@ export default function App() {
     }
   }, [payload]);
 
+  const applyHistoryEntry = useCallback((entry) => {
+    if (!modelInfo || !Array.isArray(entry?.features)) return;
+    const next = {};
+    const nextTouched = {};
+    modelInfo.feature_names.forEach((name, idx) => {
+      next[name] = String(entry.features[idx] ?? "");
+      nextTouched[name] = true;
+    });
+    setValues(next);
+    setTouched(nextTouched);
+    setPredictError(null);
+    setResult(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [modelInfo]);
+
+  const clearHistory = useCallback(() => {
+    setHistory([]);
+    localStorage.removeItem(HISTORY_KEY);
+  }, []);
+
+  useEffect(() => {
+    function onKeyDown(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        if (!busy) {
+          onSubmit();
+        }
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [busy, onSubmit]);
+
   const outcome = result ? friendlyOutcomeLabel(result.label, result.confidence_level) : null;
 
   return (
-    <div className="layout">
+    <div
+      className={`layout ${uiPrefs.highContrast ? "layout--contrast" : ""} ${uiPrefs.largeText ? "layout--large-text" : ""} ${uiPrefs.reducedMotion ? "layout--reduced-motion" : ""}`}
+    >
       <header className="hero">
-        <div className="hero-badge">Educational Demo</div>
+        <div className="hero-toprow">
+          <div className="hero-badge">Educational Demo</div>
+          <span className={`status-pill status-pill--${apiStatus}`}>
+            API {apiStatus}
+          </span>
+        </div>
         <h1>Breast Tissue<br />Sample Checker</h1>
         <p className="tagline">
           Enter five cell-measurement numbers from the Wisconsin research dataset and see
@@ -284,6 +432,27 @@ export default function App() {
           not to diagnose with.
         </p>
       </header>
+
+      <section className="card visibility-card">
+        <h2>Visibility and comfort</h2>
+        <div className="toggle-row">
+          <TogglePill
+            active={uiPrefs.highContrast}
+            onClick={() => setUiPrefs((p) => ({ ...p, highContrast: !p.highContrast }))}
+            label="High contrast"
+          />
+          <TogglePill
+            active={uiPrefs.largeText}
+            onClick={() => setUiPrefs((p) => ({ ...p, largeText: !p.largeText }))}
+            label="Large text"
+          />
+          <TogglePill
+            active={uiPrefs.reducedMotion}
+            onClick={() => setUiPrefs((p) => ({ ...p, reducedMotion: !p.reducedMotion }))}
+            label="Reduced motion"
+          />
+        </div>
+      </section>
 
       <div className="disclaimer" role="alert" aria-label="Medical disclaimer">
         <span className="disclaimer-icon">⚠</span>
@@ -335,6 +504,20 @@ export default function App() {
             ) : (
               <p className="next-step next-step--ok">All inputs are valid. You can run prediction.</p>
             )}
+            <div className="workflow-actions">
+              <button
+                className="btn btn--ghost btn--sm"
+                type="button"
+                onClick={() => focusNextField(nextFieldName)}
+                disabled={!nextFieldName}
+              >
+                Jump to next field
+              </button>
+              <span className="kbd-tip">Tip: press Ctrl+Enter to run prediction</span>
+            </div>
+            {invalidCount > 0 && (
+              <p className="invalid-summary">{invalidCount} field(s) still need valid values.</p>
+            )}
           </section>
 
           <form className="card" onSubmit={onSubmit}>
@@ -368,6 +551,15 @@ export default function App() {
                 const val = values[name] ?? "";
                 const filled = val !== "" && !Number.isNaN(parseFloat(val));
                 const bounds = modelInfo?.feature_bounds?.[name];
+                const parsed = parseField(name);
+                let valueBand = null;
+                if (bounds && parsed.valid) {
+                  const [lo, hi] = bounds;
+                  const ratio = (parsed.value - lo) / Math.max(hi - lo, 1e-6);
+                  if (ratio < 0.2) valueBand = { label: "Near lower bound", tone: "low" };
+                  else if (ratio > 0.8) valueBand = { label: "Near upper bound", tone: "high" };
+                  else valueBand = { label: "Mid-range", tone: "mid" };
+                }
                 return (
                   <div className={`field ${filled ? "field--filled" : ""} ${err ? "field--error" : ""}`} key={name}>
                     <div className="field-top">
@@ -397,6 +589,7 @@ export default function App() {
                       {filled && !err && <span className="input-check" aria-hidden>✓</span>}
                     </div>
                     {bounds && <p className="field-bounds">Allowed range: {bounds[0]} to {bounds[1]}</p>}
+                    {valueBand && <span className={`value-band value-band--${valueBand.tone}`}>{valueBand.label}</span>}
                     {err && <p className="field-error-msg" id={`err-${name}`} role="alert">{err}</p>}
                     <span className="technical-pill" title="Dataset column name">{hint.technical}</span>
                   </div>
@@ -470,7 +663,7 @@ export default function App() {
                 {Object.entries(result.probabilities || {}).map(([label, p]) => {
                   const pct = Math.round(Number(p) * 1000) / 10;
                   const tone = String(label).toLowerCase() === "benign" ? "ok" : "alert";
-                  return <AnimatedBar key={label} pct={pct} tone={tone} />;
+                  return <AnimatedBar key={label} pct={pct} tone={tone} reducedMotion={uiPrefs.reducedMotion} />;
                 })}
               </div>
 
@@ -497,6 +690,32 @@ export default function App() {
               >
                 Reset and try again
               </button>
+            </section>
+          )}
+
+          {history.length > 0 && (
+            <section className="card history-card" aria-label="Recent predictions">
+              <div className="form-header">
+                <h2>Recent predictions</h2>
+                <button className="btn btn--ghost btn--sm" type="button" onClick={clearHistory}>
+                  Clear history
+                </button>
+              </div>
+              <div className="history-list">
+                {history.map((item) => (
+                  <div className="history-item" key={item.id}>
+                    <div>
+                      <p className="history-title">
+                        {String(item.label).toLowerCase() === "benign" ? "Benign" : "Malignant"} · {(Number(item.probability) * 100).toFixed(1)}%
+                      </p>
+                      <p className="history-meta">{formatTimestamp(item.at)} · confidence {item.confidence_level}</p>
+                    </div>
+                    <button className="btn btn--ghost btn--sm" type="button" onClick={() => applyHistoryEntry(item)}>
+                      Reuse values
+                    </button>
+                  </div>
+                ))}
+              </div>
             </section>
           )}
         </>
