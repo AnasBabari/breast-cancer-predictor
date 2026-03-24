@@ -1,62 +1,96 @@
 /**
- * Plain-language labels for sklearn Wisconsin Breast Cancer feature names.
- * Keys must match `feature_names` returned by the API.
+ * Plain-language labels and guidance for the Wisconsin Breast Cancer feature set.
+ * Keys match `feature_names` returned by the /model_info API.
  */
 export const FEATURE_HINTS = {
   "mean perimeter": {
-    title: "Average distance around the cell outline",
-    hint: "Think of this as the average “size around the edge” of the cells in the image. Larger values usually mean a bigger outline.",
+    title: "Average cell outline length",
+    hint: "The average distance around the edge of all cell nuclei in the image. Think of it like measuring the perimeter of a shape — larger values mean bigger, more spread-out cells.",
+    unit: "μm",
+    exampleRange: "Typical range: 43 – 189",
   },
   "mean concave points": {
-    title: "Average indentations in the outline",
-    hint: "Counts how bumpy or “dented” the cell edge looks on average. More dips can mean a more irregular shape.",
+    title: "Average outline indentations",
+    hint: "How many times, on average, the cell edge curves inward. Irregular, deeply indented outlines can be a sign of abnormal cell growth.",
+    unit: "",
+    exampleRange: "Typical range: 0.000 – 0.201",
   },
   "worst radius": {
-    title: "Largest cell radius (most severe cells)",
-    hint: "Among the most abnormal-looking cells, this is the largest radius measured.",
+    title: "Largest cell radius observed",
+    hint: "Among the most unusual-looking cells in the image, this is the radius of the largest one. Larger values suggest more irregular cell sizes.",
+    unit: "μm",
+    exampleRange: "Typical range: 7.9 – 36.0",
   },
   "worst perimeter": {
-    title: "Largest outline (most severe cells)",
-    hint: "The biggest perimeter found among the most abnormal-looking cells.",
+    title: "Largest cell outline observed",
+    hint: "The biggest perimeter found among the most abnormal cells. Pairs with worst radius to describe the largest cells in the sample.",
+    unit: "μm",
+    exampleRange: "Typical range: 50 – 251",
   },
   "worst concave points": {
-    title: "Strongest indentations (most severe cells)",
-    hint: "How deep or sharp the outline dips are in the worst-looking cells.",
+    title: "Strongest indentations observed",
+    hint: "The most extreme inward dips found in the most irregular cells. Higher values indicate very jagged, abnormal-looking cell outlines.",
+    unit: "",
+    exampleRange: "Typical range: 0.000 – 0.291",
   },
 };
 
 export function hintForFeature(apiName) {
   const h = FEATURE_HINTS[apiName];
   if (h) {
-    return { title: h.title, hint: h.hint, technical: apiName };
+    return {
+      title: h.title,
+      hint: h.hint,
+      unit: h.unit || "",
+      exampleRange: h.exampleRange || "",
+      technical: apiName,
+    };
   }
   const pretty = apiName.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   return {
     title: pretty,
-    hint: "Enter the number that appears in your data for this field. (This demo uses research dataset columns.)",
+    hint: "Enter the numeric value from your dataset for this measurement.",
+    unit: "",
+    exampleRange: "",
     technical: apiName,
   };
 }
 
-export function friendlyOutcomeLabel(apiLabel) {
+export function friendlyOutcomeLabel(apiLabel, confidenceLevel) {
   const key = String(apiLabel).toLowerCase();
+
+  if (confidenceLevel === "uncertain") {
+    return {
+      headline: "Result is inconclusive",
+      detail:
+        "The model cannot confidently lean either way with these values. Try the example numbers to see a clearer result.",
+      tone: "neutral",
+      icon: "◎",
+    };
+  }
+
   if (key === "benign") {
     return {
-      headline: "Leans toward benign (less aggressive in this dataset)",
-      detail: "In the training data, this pattern more often matched benign (non-cancerous) tissue.",
+      headline: "Pattern leans benign",
+      detail:
+        "In the training data, this combination of measurements more often matched non-cancerous tissue samples.",
       tone: "calm",
+      icon: "○",
     };
   }
   if (key === "malignant") {
     return {
-      headline: "Leans toward malignant (more aggressive in this dataset)",
-      detail: "In the training data, this pattern more often matched malignant tissue. That does not mean a real-world diagnosis.",
+      headline: "Pattern leans malignant",
+      detail:
+        "In the training data, this combination more often matched cancerous tissue samples. This is a demo only — not a real diagnosis.",
       tone: "alert",
+      icon: "●",
     };
   }
   return {
-    headline: `Model picked: ${apiLabel}`,
-    detail: "See probabilities below for both outcomes.",
+    headline: `Model result: ${apiLabel}`,
+    detail: "See the probability breakdown below.",
     tone: "neutral",
+    icon: "◉",
   };
 }

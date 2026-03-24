@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { friendlyOutcomeLabel, hintForFeature } from "./featureHints.js";
 
 async function fetchJson(url, options) {
@@ -19,13 +19,48 @@ async function fetchJson(url, options) {
   return text ? JSON.parse(text) : null;
 }
 
+// Animated probability bar that counts up on mount
+function AnimatedBar({ pct, tone }) {
+  const [displayed, setDisplayed] = useState(0);
+  useEffect(() => {
+    let frame;
+    const start = performance.now();
+    const duration = 700;
+    function step(now) {
+      const t = Math.min((now - start) / duration, 1);
+      const ease = 1 - Math.pow(1 - t, 3);
+      setDisplayed(Math.round(pct * ease * 10) / 10);
+      if (t < 1) frame = requestAnimationFrame(step);
+    }
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [pct]);
+
+  return (
+    <div className="bar-row">
+      <div className="bar-label">
+        <span>{tone === "ok" ? "Benign (non-aggressive)" : "Malignant (aggressive)"}</span>
+        <span className={`bar-pct bar-pct--${tone}`}>{displayed}%</span>
+      </div>
+      <div className="bar-track">
+        <div
+          className={`bar-fill bar-fill--${tone}`}
+          style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [modelInfo, setModelInfo] = useState(null);
   const [values, setValues] = useState({});
+  const [touched, setTouched] = useState({});
   const [loadError, setLoadError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [predictError, setPredictError] = useState(null);
   const [result, setResult] = useState(null);
+  const resultRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,26 +70,20 @@ export default function App() {
         if (cancelled) return;
         setModelInfo(info);
         const initial = {};
-        (info.feature_names || []).forEach((name) => {
-          initial[name] = "";
-        });
+        (info.feature_names || []).forEach((name) => { initial[name] = ""; });
         setValues(initial);
-        setLoadError(null);
       } catch (e) {
         if (cancelled) return;
         setLoadError(e instanceof Error ? e.message : String(e));
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
   const featureNames = modelInfo?.feature_names ?? [];
 
   const fillExample = useCallback(() => {
     if (!modelInfo) return;
-    // First row of sklearn Wisconsin set, in default model feature order (k=5).
     const exampleByName = {
       "mean perimeter": 122.8,
       "mean concave points": 0.1471,
@@ -63,10 +92,13 @@ export default function App() {
       "worst concave points": 0.2654,
     };
     const next = {};
+    const nextTouched = {};
     modelInfo.feature_names.forEach((name) => {
       next[name] = exampleByName[name] != null ? String(exampleByName[name]) : "";
+      nextTouched[name] = true;
     });
     setValues(next);
+    setTouched(nextTouched);
     setPredictError(null);
     setResult(null);
   }, [modelInfo]);
@@ -74,21 +106,60 @@ export default function App() {
   const onChange = useCallback((name, raw) => {
     setValues((v) => ({ ...v, [name]: raw }));
     setPredictError(null);
+    setResult(null);
   }, []);
+
+  const onBlur = useCallback((name) => {
+    setTouched((t) => ({ ...t, [name]: true }));
+  }, []);
+
+  const fieldError = useCallback(
+    (name) => {
+      if (!touched[name]) return null;
+      const s = values[name];
+      if (s == null || String(s).trim() === "") return "Required";
+      const n = parseFloat(s);
+      if (Number.isNaN(n)) return "Must be a number";
+      const bounds = modelInfo?.feature_bounds?.[name];
+      if (bounds) {
+        const [lo, hi] = bounds;
+        if (n < lo || n > hi) return `Expected ${lo}–${hi}`;
+      }
+      return null;
+    },
+    [touched, values, modelInfo]
+  );
 
   const canSubmit = useMemo(() => {
     if (!modelInfo) return false;
     return modelInfo.feature_names.every((n) => {
       const s = values[n];
-      if (s == null || String(s).trim() === "") return false;
-      return !Number.isNaN(parseFloat(s));
+      if (!s || String(s).trim() === "") return false;
+      const num = parseFloat(s);
+      if (Number.isNaN(num)) return false;
+      const bounds = modelInfo?.feature_bounds?.[n];
+      if (!bounds) return true;
+      const [lo, hi] = bounds;
+      return num >= lo && num <= hi;
     });
   }, [modelInfo, values]);
 
+  const filledCount = useMemo(() => {
+    return featureNames.filter((n) => {
+      const s = values[n];
+      return s && String(s).trim() !== "" && !Number.isNaN(parseFloat(s));
+    }).length;
+  }, [featureNames, values]);
+
   const onSubmit = useCallback(
     async (ev) => {
-      ev.preventDefault();
+      ev?.preventDefault?.();
       if (!modelInfo || !canSubmit) return;
+      // Touch all fields to show any errors
+      const allTouched = {};
+      modelInfo.feature_names.forEach((n) => { allTouched[n] = true; });
+      setTouched(allTouched);
+
       const features = modelInfo.feature_names.map((n) => parseFloat(values[n]));
       setBusy(true);
       setPredictError(null);
@@ -100,6 +171,7 @@ export default function App() {
           body: JSON.stringify({ features }),
         });
         setResult(data);
+        setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
       } catch (e) {
         setPredictError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -109,187 +181,201 @@ export default function App() {
     [modelInfo, canSubmit, values]
   );
 
-  const outcome = result ? friendlyOutcomeLabel(result.label) : null;
+  const outcome = result ? friendlyOutcomeLabel(result.label, result.confidence_level) : null;
 
   return (
     <div className="layout">
       <header className="hero">
-        <h1>Breast tissue sample checker</h1>
+        <div className="hero-badge">Educational Demo</div>
+        <h1>Breast Tissue<br />Sample Checker</h1>
         <p className="tagline">
-          A gentle, step-by-step demo. Enter five numbers from the same kind of lab measurements used in classic
-          research data — then see how a simple model would lean (educational only).
+          Enter five cell-measurement numbers from the Wisconsin research dataset and see
+          how a simple logistic regression model classifies the pattern — built to learn from,
+          not to diagnose with.
         </p>
       </header>
 
-      <section className="card disclaimer" aria-label="Disclaimer">
-        <h2>Not medical advice</h2>
-        <p>
-          This page is a learning toy. It does <strong>not</strong> check real patients, read your scans, or replace a
-          doctor. Never use it to decide on care.
-        </p>
-      </section>
+      <div className="disclaimer" role="alert" aria-label="Medical disclaimer">
+        <span className="disclaimer-icon">⚠</span>
+        <div>
+          <strong>Not medical advice.</strong> This is a learning prototype. It cannot
+          examine real patients, read scans, or replace clinical judgement. Never use
+          it to make decisions about care.
+        </div>
+      </div>
 
       {loadError ? (
         <section className="card">
-          <h2>We couldn&apos;t reach the model</h2>
-          <p className="muted">Fix: start the API from the project folder, then refresh.</p>
-          <div className="error-box">
-            {`Tip: in one terminal run
-
-  python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
-
-For the React dev server (separate terminal):
-
-  cd frontend
-  npm install
-  npm run dev
-
-Details: ${loadError}`}
-          </div>
+          <h2>Could not connect to the model</h2>
+          <p className="muted">Start the API server, then refresh this page.</p>
+          <pre className="error-box">{`python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000\n\nDetails: ${loadError}`}</pre>
         </section>
       ) : !modelInfo ? (
-        <section className="card">
-          <div className="loading" role="status">
-            <span className="spinner" aria-hidden />
-            Loading the form…
-          </div>
+        <section className="card card--loading">
+          <span className="spinner" aria-hidden />
+          <span>Loading model info…</span>
         </section>
       ) : (
         <>
-          <section className="card steps-intro" aria-label="How this works">
-            <h2>How it works (simple)</h2>
-            <p>
-              You&apos;ll fill in <strong>{featureNames.length} numbers</strong>, one at a time. Each number describes
-              something about cell shape from image-based measurements (like the Wisconsin Breast Cancer research
-              dataset). Then press <strong>See result</strong>.
-            </p>
-            <details>
-              <summary>Why does it still sound technical under the hood?</summary>
-              <p style={{ marginTop: 10, marginBottom: 0 }}>
-                The server uses exact column names from the research dataset so the machine-learning model stays
-                aligned. Above each question we use everyday wording; you can peek at the tiny gray dataset label if you
-                want the precise name.
-              </p>
-            </details>
-          </section>
+          {/* Progress indicator */}
+          <div className="progress-bar-wrap" aria-label={`${filledCount} of ${featureNames.length} fields filled`}>
+            <div className="progress-header">
+              <span>Inputs filled</span>
+              <span>{filledCount} / {featureNames.length}</span>
+            </div>
+            <div className="progress-track">
+              <div
+                className="progress-fill"
+                style={{ width: `${featureNames.length > 0 ? (filledCount / featureNames.length) * 100 : 0}%` }}
+              />
+            </div>
+          </div>
 
-          <form className="card" onSubmit={onSubmit} aria-label="Measurements">
-            <h2>Your numbers</h2>
-            <p className="muted" style={{ marginTop: 0 }}>
-              Type decimal numbers (for example <code style={{ color: "var(--text)" }}>12.5</code>). Use{" "}
-              <strong>Try example numbers</strong> if you just want to see a result.
+          <section className="card">
+            <div className="form-header">
+              <h2>Measurements</h2>
+              <button className="btn btn--ghost" type="button" onClick={fillExample}>
+                Try example values
+              </button>
+            </div>
+            <p className="muted form-subhead">
+              These fields map directly to columns in the Wisconsin Breast Cancer
+              research dataset. Each describes the shape of cell nuclei under a microscope.
             </p>
 
             <div className="field-grid">
               {featureNames.map((name, i) => {
                 const hint = hintForFeature(name);
+                const err = fieldError(name);
+                const val = values[name] ?? "";
+                const filled = val !== "" && !Number.isNaN(parseFloat(val));
                 return (
-                  <div className="field" key={name}>
+                  <div className={`field ${filled ? "field--filled" : ""} ${err ? "field--error" : ""}`} key={name}>
                     <div className="field-top">
+                      <span className="field-index">{String(i + 1).padStart(2, "0")}</span>
                       <p className="field-title">{hint.title}</p>
-                      <span className="field-step">
-                        Step {i + 1} of {featureNames.length}
-                      </span>
                     </div>
                     <p className="field-hint">{hint.hint}</p>
-                    <label className="sr-only" htmlFor={`in-${name}`}>
-                      {hint.title}
-                    </label>
-                    <input
-                      id={`in-${name}`}
-                      name={name}
-                      type="number"
-                      inputMode="decimal"
-                      step="any"
-                      autoComplete="off"
-                      placeholder="Type a number"
-                      value={values[name] ?? ""}
-                      onChange={(e) => onChange(name, e.target.value)}
-                    />
-                    <span className="technical-pill">Dataset field: {hint.technical}</span>
+                    {hint.exampleRange && (
+                      <p className="field-range">{hint.exampleRange}{hint.unit ? ` ${hint.unit}` : ""}</p>
+                    )}
+                    <div className="input-wrap">
+                      <label className="sr-only" htmlFor={`in-${name}`}>{hint.title}</label>
+                      <input
+                        id={`in-${name}`}
+                        name={name}
+                        type="number"
+                        inputMode="decimal"
+                        step="any"
+                        autoComplete="off"
+                        placeholder="Enter a number"
+                        value={val}
+                        onChange={(e) => onChange(name, e.target.value)}
+                        onBlur={() => onBlur(name)}
+                        aria-invalid={err ? "true" : undefined}
+                        aria-describedby={err ? `err-${name}` : undefined}
+                      />
+                      {filled && !err && <span className="input-check" aria-hidden>✓</span>}
+                    </div>
+                    {err && <p className="field-error-msg" id={`err-${name}`} role="alert">{err}</p>}
+                    <span className="technical-pill" title="Dataset column name">{hint.technical}</span>
                   </div>
                 );
               })}
             </div>
 
             <div className="actions">
-              <button type="submit" className="btn" disabled={!canSubmit || busy}>
-                {busy ? "Working…" : "See result"}
-              </button>
-              <button type="button" className="btn btn-secondary" onClick={fillExample}>
-                Try example numbers
+              <button
+                className="btn btn--primary"
+                type="button"
+                onClick={onSubmit}
+                disabled={!canSubmit || busy}
+                aria-busy={busy}
+              >
+                {busy
+                  ? <><span className="spinner spinner--sm" aria-hidden /> Analysing…</>
+                  : "Run prediction"}
               </button>
             </div>
 
-            {predictError ? <div className="error-box">{predictError}</div> : null}
-          </form>
+            {predictError && (
+              <div className="error-box" role="alert">
+                <strong>Prediction failed</strong>
+                <pre>{predictError}</pre>
+              </div>
+            )}
+          </section>
 
-          {result ? (
-            <section className="card" aria-live="polite" aria-label="Result">
-              <h2>What the demo model says</h2>
-              {outcome ? (
-                <>
-                  <p className={`result-headline ${outcome.tone}`}>{outcome.headline}</p>
-                  <p className="result-detail">{outcome.detail}</p>
-                </>
-              ) : null}
+          {result && (
+            <section
+              className={`card result-card result-card--${outcome?.tone}`}
+              aria-live="polite"
+              ref={resultRef}
+            >
+              <div className="result-icon" aria-hidden>{outcome?.icon}</div>
+              <h2 className="result-headline">{outcome?.headline}</h2>
+              <p className="result-detail">{outcome?.detail}</p>
 
-              <p className="muted" style={{ marginTop: 0 }}>
-                The model is not sure in life — it only outputs probabilities for this tutorial:
-              </p>
+              {/* Confidence badge */}
+              <div className={`confidence-badge confidence-badge--${result.confidence_level}`}>
+                <span className="confidence-dot" />
+                Confidence:{" "}
+                <strong>
+                  {result.confidence_level === "high"
+                    ? "High"
+                    : result.confidence_level === "moderate"
+                    ? "Moderate"
+                    : "Uncertain"}
+                </strong>
+                <span className="confidence-pct">({(result.probability * 100).toFixed(1)}%)</span>
+              </div>
 
-              {Object.entries(result.probabilities || {}).map(([label, p]) => {
-                const pct = Math.round(Number(p) * 1000) / 10;
-                const isBenign = String(label).toLowerCase() === "benign";
-                return (
-                  <div className="bar-row" key={label}>
-                    <div className="bar-label">
-                      <strong>{isBenign ? "Benign (less aggressive pattern)" : "Malignant (more aggressive pattern)"}</strong>
-                      <span>{pct}%</span>
-                    </div>
-                    <div className="bar-track">
-                      <div
-                        className={`bar-fill ${isBenign ? "ok" : "alert"}`}
-                        style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
-                      />
-                    </div>
+              {result.confidence_level !== "uncertain" && (
+                <p className="confidence-note">{result.confidence_note}</p>
+              )}
+
+              <div className="bars">
+                {Object.entries(result.probabilities || {}).map(([label, p]) => {
+                  const pct = Math.round(Number(p) * 1000) / 10;
+                  const tone = String(label).toLowerCase() === "benign" ? "ok" : "alert";
+                  return <AnimatedBar key={label} pct={pct} tone={tone} />;
+                })}
+              </div>
+
+              {modelInfo?.metrics && Object.keys(modelInfo.metrics).length > 0 && (
+                <details className="metrics-details">
+                  <summary>Model training stats</summary>
+                  <div className="metrics-grid">
+                    {Object.entries(modelInfo.metrics).map(([k, v]) => (
+                      <div className="metric-item" key={k}>
+                        <span className="metric-label">{k.replace(/_/g, " ")}</span>
+                        <span className="metric-value">
+                          {typeof v === "number" ? v.toFixed(4) : String(v)}
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                );
-              })}
+                </details>
+              )}
 
-              {modelInfo?.metrics && Object.keys(modelInfo.metrics).length > 0 ? (
-                <div className="metrics">
-                  Training notes (for nerds):{" "}
-                  {Object.entries(modelInfo.metrics)
-                    .map(([k, v]) => `${k}=${typeof v === "number" ? v.toFixed(4) : v}`)
-                    .join(", ")}
-                </div>
-              ) : null}
+              <button
+                className="btn btn--ghost btn--sm"
+                type="button"
+                onClick={() => { setResult(null); setValues(Object.fromEntries(featureNames.map((n) => [n, ""]))); setTouched({}); }}
+              >
+                ← Reset and try again
+              </button>
             </section>
-          ) : null}
+          )}
         </>
       )}
 
       <footer className="footer">
-        Educational demo ·{" "}
-        <a href="/docs" target="_blank" rel="noreferrer">
-          API docs
-        </a>
+        Educational demo · Not a medical device ·{" "}
+        <a href="/docs" target="_blank" rel="noreferrer">API docs</a>
       </footer>
 
-      <style>{`
-        .sr-only {
-          position: absolute;
-          width: 1px;
-          height: 1px;
-          padding: 0;
-          margin: -1px;
-          overflow: hidden;
-          clip: rect(0, 0, 0, 0);
-          white-space: nowrap;
-          border: 0;
-        }
-      `}</style>
+      <style>{`.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}`}</style>
     </div>
   );
 }

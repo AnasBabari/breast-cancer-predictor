@@ -12,6 +12,15 @@ A small full-stack demo: train a **scikit-learn** model on the classic [Wisconsi
 
 A committed **`model.joblib`** is included so you can run the API right after installing Python deps. Re-run training if you change hyperparameters or feature count.
 
+## Recent Improvements
+
+- Backend validation now uses dynamic per-feature bounds computed from model training statistics, with a small safety margin.
+- `/predict` now returns confidence metadata: `confidence_level` and `confidence_note`.
+- `/model_info` now returns `feature_bounds` so the frontend can enforce valid numeric ranges.
+- Training now reports cross-validated accuracy (`cv_accuracy_mean`, `cv_accuracy_std`) and stores per-feature stats in the artifact.
+- Frontend now includes improved input validation, progress tracking, animated probability bars, confidence badges, and clearer result states.
+- UI styling was modernized for readability and accessibility while keeping the app mobile-friendly.
+
 ## Requirements
 
 - **Python 3.10+**
@@ -85,8 +94,16 @@ Use `python backend/train.py --k 5` to change how many features are selected (th
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Liveness check |
-| GET | `/model_info` | Feature names, class names, training metrics |
-| POST | `/predict` | JSON body: `{ "features": [n1, n2, n3, n4, n5] }` (order = `feature_names`) |
+| GET | `/model_info` | Feature names, class names, training metrics, and per-feature bounds |
+| POST | `/predict` | JSON body: `{ "features": [n1, n2, n3, n4, n5] }` (order = `feature_names`) + confidence metadata |
+
+Example `/predict` response fields:
+
+- `label`: predicted class name (`"benign"` or `"malignant"`)
+- `probability`: probability of the predicted class
+- `probabilities`: per-class probability map
+- `confidence_level`: one of `high`, `moderate`, `uncertain`
+- `confidence_note`: human-readable confidence guidance
 
 Example `curl` (values from the first row of the sklearn dataset, default trained feature order):
 
