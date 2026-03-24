@@ -1,18 +1,44 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import joblib
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from starlette.staticfiles import StaticFiles
 
 
 ARTIFACT_PATH = os.path.join(os.path.dirname(__file__), "artifacts", "model.joblib")
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+FRONTEND_DIST = _PROJECT_ROOT / "frontend" / "dist"
 
-app = FastAPI(title="Breast Cancer Predictor (Pretrained)")
+MODEL_ARTIFACT: dict[str, Any] | None = None
+
+
+def _load_artifact() -> dict[str, Any]:
+    if not os.path.exists(ARTIFACT_PATH):
+        raise FileNotFoundError(
+            f"Missing pretrained artifact at {ARTIFACT_PATH}. Run `python backend/train.py` first."
+        )
+    artifact = joblib.load(ARTIFACT_PATH)
+    if "pipeline" not in artifact or "selected_feature_names" not in artifact:
+        raise ValueError("Artifact format is invalid: expected keys `pipeline` and `selected_feature_names`.")
+    return artifact
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global MODEL_ARTIFACT
+    MODEL_ARTIFACT = _load_artifact()
+    yield
+
+
+app = FastAPI(title="Breast Cancer Predictor (Pretrained)", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,26 +65,6 @@ class ModelInfoResponse(BaseModel):
     feature_names: list[str]
     target_names: list[str]
     metrics: dict[str, Any]
-
-
-MODEL_ARTIFACT: dict[str, Any] | None = None
-
-
-def _load_artifact() -> dict[str, Any]:
-    if not os.path.exists(ARTIFACT_PATH):
-        raise FileNotFoundError(
-            f"Missing pretrained artifact at {ARTIFACT_PATH}. Run `python backend/train.py` first."
-        )
-    artifact = joblib.load(ARTIFACT_PATH)
-    if "pipeline" not in artifact or "selected_feature_names" not in artifact:
-        raise ValueError("Artifact format is invalid: expected keys `pipeline` and `selected_feature_names`.")
-    return artifact
-
-
-@app.on_event("startup")
-def _startup() -> None:
-    global MODEL_ARTIFACT
-    MODEL_ARTIFACT = _load_artifact()
 
 
 @app.get("/health")
@@ -101,3 +107,6 @@ def predict(req: PredictRequest) -> PredictResponse:
         feature_names=feature_names,
     )
 
+
+if FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
