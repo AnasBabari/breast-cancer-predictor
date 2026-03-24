@@ -4,3 +4,5 @@ uvicorn[standard]
 scikit-learn
 joblib
 numpy
+pytest
+httpx

@@ -26,6 +26,9 @@ A committed **`model.joblib`** is included so you can run the API right after in
 - New visibility controls let users toggle high-contrast mode, larger text, and reduced motion.
 - Recent prediction history is stored locally and can be reused with one click.
 - UI styling was modernized for readability and accessibility while keeping the app mobile-friendly.
+- Added backend API tests (pytest) including a `/predict` smoke test and validation test.
+- Added CI workflow (GitHub Actions) to run backend tests and frontend build on push/PR.
+- Added Docker and docker-compose support for simpler sharing/deployment.
 
 ## UI/UX Feature Guide
 
@@ -70,6 +73,61 @@ The pretrained model artifact `backend/artifacts/model.joblib` remains tracked i
 - **Python 3.10+**
 - **Node.js 18+** (for building the frontend)
 - Python packages in `backend/requirements.txt`
+
+## Testing
+
+Run backend tests from repo root:
+
+```bash
+python -m pytest -q backend/tests
+```
+
+Current test coverage includes:
+
+- `/health` endpoint sanity check
+- `/model_info` response shape check
+- `/predict` smoke test with known valid payload
+- `/predict` out-of-range input validation check
+
+## CI/CD
+
+GitHub Actions workflow is available at `.github/workflows/ci.yml` and runs on push/PR:
+
+- backend test job (`pytest`)
+- frontend build job (`npm run build`)
+
+This gives a baseline CI gate before merges.
+
+## Docker
+
+### Build and run with Docker
+
+```bash
+docker build -t breast-cancer-predictor .
+docker run --rm -p 8000:8000 breast-cancer-predictor
+```
+
+### Or run with Docker Compose
+
+```bash
+docker compose up --build
+```
+
+Open: `http://127.0.0.1:8000/`
+
+## Model Artifact Strategy
+
+Right now `backend/artifacts/model.joblib` is committed for convenience. For cleaner long-term repo hygiene, you have two recommended options:
+
+1. Keep artifact out of git and retrain in setup/CI:
+  - Remove tracked artifact from git
+  - Run `python backend/train.py` as a setup step
+2. Track artifact via Git LFS:
+  - Install git-lfs
+  - `git lfs track "backend/artifacts/*.joblib"`
+  - Commit `.gitattributes`
+
+If project size grows or model versions increase, option 2 is generally cleaner.
 
 ## Quick start (recommended)
 
