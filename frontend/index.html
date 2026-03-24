@@ -1,33 +1,12 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Breast Cancer Predictor</title>
-    <link rel="stylesheet" href="styles.css" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Breast tissue sample checker (demo)</title>
   </head>
   <body>
-    <main class="container">
-      <h1>Breast Cancer Predictor</h1>
-      <p class="subtitle">Pretrained model prediction-only (5 features).</p>
-
-      <section class="card">
-        <h2>Model Inputs</h2>
-        <div id="modelInfo" class="small muted">Loading model info...</div>
-
-        <form id="predictForm" class="form" autocomplete="off">
-          <div id="inputs" class="inputs"></div>
-          <button id="predictBtn" type="submit" class="btn">Predict</button>
-        </form>
-      </section>
-
-      <section class="card">
-        <h2>Result</h2>
-        <pre id="result" class="result muted">Make a prediction to see results.</pre>
-      </section>
-    </main>
-
-    <script src="app.js"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
-
