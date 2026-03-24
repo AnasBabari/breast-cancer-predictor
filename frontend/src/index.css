@@ -205,12 +205,47 @@ body {
   color: var(--text-dim);
 }
 
+/* ─── Workflow ──────────────────────────────── */
+
+.workflow-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.workflow-item {
+  margin: 0;
+  font-size: 0.86rem;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+
+.next-step {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--warn);
+}
+
+.next-step--ok {
+  color: var(--ok);
+}
+
 /* ─── Fields ─────────────────────────────────── */
 
 .field-grid {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.quick-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
 }
 
 .field {
@@ -260,6 +295,13 @@ body {
   font-size: 0.72rem;
   color: var(--text-muted);
   margin: 0 0 10px;
+}
+
+.field-bounds {
+  margin: 7px 0 0;
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
 }
 
 .input-wrap {
@@ -374,6 +416,48 @@ body {
 }
 
 .btn--sm { padding: 7px 14px; font-size: 0.82rem; }
+
+/* ─── Payload tools ─────────────────────────── */
+
+.form-tools {
+  margin-top: 14px;
+}
+
+.payload-box {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.2);
+  padding: 10px 12px;
+}
+
+.payload-box summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+.payload-box pre {
+  margin: 10px 0 0;
+  font-size: 0.76rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+}
+
+.payload-actions {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.copy-ok {
+  color: var(--ok);
+  font-size: 0.78rem;
+  font-family: var(--font-mono);
+}
 
 /* ─── Spinner ────────────────────────────────── */
 

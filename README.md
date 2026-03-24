@@ -19,7 +19,39 @@ A committed **`model.joblib`** is included so you can run the API right after in
 - `/model_info` now returns `feature_bounds` so the frontend can enforce valid numeric ranges.
 - Training now reports cross-validated accuracy (`cv_accuracy_mean`, `cv_accuracy_std`) and stores per-feature stats in the artifact.
 - Frontend now includes improved input validation, progress tracking, animated probability bars, confidence badges, and clearer result states.
+- The form now includes guided workflow steps, quick presets (benign-like / malignant-like), midpoint autofill, and one-click reset.
+- Inputs are auto-saved in browser local storage and restored on reload for a smoother workflow.
+- A JSON payload preview and copy button make API usage easier for beginners.
 - UI styling was modernized for readability and accessibility while keeping the app mobile-friendly.
+
+## UI/UX Feature Guide
+
+- Guided 3-step workflow panel that explains the full flow from inputs to interpretation.
+- Next-field helper that highlights what to complete next.
+- Quick action buttons:
+  - `Malignant-like preset`
+  - `Benign-like preset`
+  - `Fill midpoint values`
+  - `Clear all`
+- Per-field validation shows:
+  - required errors
+  - numeric parsing errors
+  - allowed range from backend `feature_bounds`
+- Request preview tools:
+  - expandable JSON payload preview
+  - copy-to-clipboard action once the payload is valid
+- Result panel includes confidence level, confidence note, and animated probability bars.
+
+## Git Ignore Notes
+
+The root `.gitignore` now covers:
+
+- Python caches and virtual environments
+- Frontend build output and package cache logs
+- Local temp/log files
+- common IDE and OS-generated files
+
+The pretrained model artifact `backend/artifacts/model.joblib` remains tracked intentionally for quick startup.
 
 ## Requirements
 

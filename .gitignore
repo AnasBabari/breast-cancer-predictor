@@ -1,6 +1,30 @@
+# Python
 .venv/
+venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / frontend builds
 frontend/node_modules/
 frontend/dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local artifacts and temp files
 backend/artifacts/*.tmp
+*.tmp
+*.log
+
+# Editor / IDE
+.vscode/*.code-workspace
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
