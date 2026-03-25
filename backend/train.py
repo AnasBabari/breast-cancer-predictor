@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from typing import Any, cast
 
 import joblib
 import numpy as np
@@ -14,6 +15,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
+from sklearn.utils import Bunch
 
 
 ARTIFACT_PATH = os.path.join(os.path.dirname(__file__), "artifacts", "model.joblib")
@@ -54,7 +56,7 @@ def _evaluate_model(
     x_test: np.ndarray,
     y_train: np.ndarray,
     y_test: np.ndarray,
-) -> tuple[dict[str, float | list[list[int]]], Pipeline]:
+) -> tuple[dict[str, Any], Pipeline]:
     pipeline.fit(x_train, y_train)
 
     preds = pipeline.predict(x_test)
@@ -83,7 +85,7 @@ def _evaluate_model(
 
 
 def train_and_save(k: int = 5, random_state: int = 42) -> None:
-    data = load_breast_cancer()
+    data = cast(Bunch, load_breast_cancer(return_X_y=False, as_frame=False))
     X = data.data
     y = data.target
 
@@ -143,7 +145,7 @@ def train_and_save(k: int = 5, random_state: int = 42) -> None:
 
     print("\nModel comparison (prioritizing malignant recall):")
 
-    model_comparison: dict[str, dict[str, float | list[list[int]]]] = {}
+    model_comparison: dict[str, dict[str, Any]] = {}
     trained_models: dict[str, Pipeline] = {}
     for model_name, candidate in candidates.items():
         model_metrics, trained = _evaluate_model(
@@ -200,9 +202,9 @@ def train_and_save(k: int = 5, random_state: int = 42) -> None:
     print(f"\n✓ Artifact saved to: {ARTIFACT_PATH}")
     print(f"  Selected features (k={k}): {selected_feature_names}")
     print(f"  Best model        : {best_model_name}")
-    print(f"  Accuracy          : {best_metrics['accuracy']:.4f}")
-    print(f"  Precision (mal)   : {best_metrics['precision_malignant']:.4f}")
-    print(f"  Recall (mal)      : {best_metrics['recall_malignant']:.4f}")
+    print(f"  Accuracy          : {float(best_metrics['accuracy']):.4f}")
+    print(f"  Precision (mal)   : {float(best_metrics['precision_malignant']):.4f}")
+    print(f"  Recall (mal)      : {float(best_metrics['recall_malignant']):.4f}")
     print(f"  Confusion matrix  : {best_metrics['confusion_matrix']}")
 
 
