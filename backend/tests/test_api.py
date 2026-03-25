@@ -53,3 +53,37 @@ def test_predict_out_of_range_rejected(client) -> None:
     assert res.status_code == 422
     payload = res.get_json()
     assert "detail" in payload
+
+
+def test_predict_requires_features_list(client) -> None:
+    res = client.post("/predict", json={})
+
+    assert res.status_code == 400
+    payload = res.get_json()
+    assert "features" in payload["detail"]
+
+
+def test_predict_rejects_non_list_features(client) -> None:
+    res = client.post("/predict", json={"features": "not-a-list"})
+
+    assert res.status_code == 400
+    payload = res.get_json()
+    assert "features" in payload["detail"]
+
+
+def test_predict_rejects_wrong_feature_count(client) -> None:
+    res = client.post("/predict", json={"features": [122.8, 0.1471]})
+
+    assert res.status_code == 400
+    payload = res.get_json()
+    assert "Expected" in payload["detail"]
+
+
+def test_predict_rejects_non_numeric_feature_value(client) -> None:
+    body = {"features": [122.8, "abc", 25.38, 184.6, 0.2654]}
+    res = client.post("/predict", json=body)
+
+    assert res.status_code == 422
+    payload = res.get_json()
+    assert isinstance(payload.get("detail"), list)
+    assert any("must be numeric" in str(err) for err in payload["detail"])
