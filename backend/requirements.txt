@@ -1,8 +1,6 @@
-fastapi
-pydantic>=2.9.0
-uvicorn[standard]
+flask
+flask-cors
 scikit-learn
 joblib
 numpy
 pytest
-httpx

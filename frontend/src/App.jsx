@@ -225,6 +225,16 @@ export default function App() {
     setResult(null);
   }, [modelInfo]);
 
+  const sliderStepFor = useCallback((name) => {
+    const bounds = modelInfo?.feature_bounds?.[name];
+    if (!bounds) return 0.01;
+    const [lo, hi] = bounds;
+    const span = Math.max(hi - lo, 1e-6);
+    if (span >= 100) return 0.5;
+    if (span >= 10) return 0.1;
+    return 0.001;
+  }, [modelInfo]);
+
   const fillMidpoints = useCallback(() => {
     if (!modelInfo) return;
     const next = {};
@@ -257,6 +267,21 @@ export default function App() {
     setResult(null);
     localStorage.removeItem(STORAGE_KEY);
   }, [modelInfo]);
+
+  const initializeToMidpoints = useCallback((info) => {
+    if (!info) return;
+    const next = {};
+    info.feature_names.forEach((name) => {
+      const bounds = info?.feature_bounds?.[name];
+      if (!bounds) {
+        next[name] = "";
+      } else {
+        const [lo, hi] = bounds;
+        next[name] = String(Math.round((((lo + hi) / 2) * 1000)) / 1000);
+      }
+    });
+    setValues(next);
+  }, []);
 
   const onChange = useCallback((name, raw) => {
     setValues((v) => ({ ...v, [name]: raw }));
@@ -327,6 +352,18 @@ export default function App() {
       features: modelInfo.feature_names.map((n) => parseFloat(values[n])),
     };
   }, [modelInfo, canSubmit, values]);
+
+  const topImportance = useMemo(() => {
+    const arr = modelInfo?.global_feature_importance;
+    if (!Array.isArray(arr)) return [];
+    return arr.slice(0, 5);
+  }, [modelInfo]);
+
+  const comparisonRows = useMemo(() => {
+    const comparison = modelInfo?.model_comparison;
+    if (!comparison || typeof comparison !== "object") return [];
+    return Object.entries(comparison);
+  }, [modelInfo]);
 
   const onSubmit = useCallback(
     async (ev) => {
@@ -414,22 +451,27 @@ export default function App() {
 
   const outcome = result ? friendlyOutcomeLabel(result.label, result.confidence_level) : null;
 
+  useEffect(() => {
+    if (modelInfo && Object.keys(values).length === 0) {
+      initializeToMidpoints(modelInfo);
+    }
+  }, [modelInfo, values, initializeToMidpoints]);
+
   return (
     <div
       className={`layout ${uiPrefs.highContrast ? "layout--contrast" : ""} ${uiPrefs.largeText ? "layout--large-text" : ""} ${uiPrefs.reducedMotion ? "layout--reduced-motion" : ""}`}
     >
       <header className="hero">
         <div className="hero-toprow">
-          <div className="hero-badge">Educational Demo</div>
+          <div className="hero-badge">AI Breast Cancer Predictor Tool</div>
           <span className={`status-pill status-pill--${apiStatus}`}>
             API {apiStatus}
           </span>
         </div>
-        <h1>Breast Tissue<br />Sample Checker</h1>
+        <h1>AI Breast Cancer<br />Predictor Tool</h1>
         <p className="tagline">
-          Enter five cell-measurement numbers from the Wisconsin research dataset and see
-          how a simple logistic regression model classifies the pattern — built to learn from,
-          not to diagnose with.
+          Product-style educational app for screening model behavior on breast-cancer cell features.
+          It compares multiple models and highlights explainability so predictions are interpretable.
         </p>
       </header>
 
@@ -457,7 +499,7 @@ export default function App() {
       <div className="disclaimer" role="alert" aria-label="Medical disclaimer">
         <span className="disclaimer-icon">⚠</span>
         <div>
-          <strong>Not medical advice.</strong> This is a learning prototype. It cannot
+          <strong>Educational use only.</strong> This is not a medical device and cannot
           examine real patients, read scans, or replace clinical judgement. Never use
           it to make decisions about care.
         </div>
@@ -467,7 +509,7 @@ export default function App() {
         <section className="card">
           <h2>Could not connect to the model</h2>
           <p className="muted">Start the API server, then refresh this page.</p>
-          <pre className="error-box">{`python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000\n\nDetails: ${loadError}`}</pre>
+          <pre className="error-box">{`python backend/main.py\n\nDetails: ${loadError}`}</pre>
         </section>
       ) : !modelInfo ? (
         <section className="card card--loading">
@@ -493,9 +535,9 @@ export default function App() {
           <section className="card workflow">
             <h2>Simple workflow</h2>
             <div className="workflow-list">
-              <p className="workflow-item">1. Fill the five measurements manually or choose a preset.</p>
-              <p className="workflow-item">2. Run prediction once all fields are valid.</p>
-              <p className="workflow-item">3. Read confidence and compare both class probabilities.</p>
+              <p className="workflow-item">1. Adjust the feature sliders.</p>
+              <p className="workflow-item">2. Click Predict.</p>
+              <p className="workflow-item">3. Inspect label, probabilities, and top 3 driving factors.</p>
             </div>
             {nextFieldName ? (
               <p className="next-step">
@@ -522,11 +564,10 @@ export default function App() {
 
           <form className="card" onSubmit={onSubmit}>
             <div className="form-header">
-              <h2>Measurements</h2>
+              <h2>Input Features (Sliders)</h2>
             </div>
             <p className="muted form-subhead">
-              These fields map directly to columns in the Wisconsin Breast Cancer
-              research dataset. Each describes the shape of cell nuclei under a microscope.
+              Move sliders to simulate nucleus measurement values from the Wisconsin dataset.
             </p>
 
             <div className="quick-actions">
@@ -572,9 +613,29 @@ export default function App() {
                     )}
                     <div className="input-wrap">
                       <label className="sr-only" htmlFor={`in-${name}`}>{hint.title}</label>
+                      {bounds ? (
+                        <>
+                          <input
+                            id={`in-${name}`}
+                            name={name}
+                            type="range"
+                            min={bounds[0]}
+                            max={bounds[1]}
+                            step={sliderStepFor(name)}
+                            value={val}
+                            onChange={(e) => onChange(name, e.target.value)}
+                            onBlur={() => onBlur(name)}
+                            className="slider"
+                          />
+                          <div className="range-labels">
+                            <span>{bounds[0]}</span>
+                            <span>{bounds[1]}</span>
+                          </div>
+                        </>
+                      ) : null}
                       <input
-                        id={`in-${name}`}
-                        name={name}
+                        id={`num-${name}`}
+                        name={`num-${name}`}
                         type="number"
                         inputMode="decimal"
                         step="any"
@@ -585,6 +646,7 @@ export default function App() {
                         onBlur={() => onBlur(name)}
                         aria-invalid={err ? "true" : undefined}
                         aria-describedby={err ? `err-${name}` : undefined}
+                        className="number-input"
                       />
                       {filled && !err && <span className="input-check" aria-hidden>✓</span>}
                     </div>
@@ -606,7 +668,7 @@ export default function App() {
               >
                 {busy
                   ? <><span className="spinner spinner--sm" aria-hidden /> Analysing…</>
-                  : "Run prediction"}
+                  : "Predict"}
               </button>
             </div>
 
@@ -667,6 +729,22 @@ export default function App() {
                 })}
               </div>
 
+              {Array.isArray(result.top_factors) && result.top_factors.length > 0 && (
+                <section className="explain-card">
+                  <h3>Top 3 factors affecting this prediction</h3>
+                  <ul className="factor-list">
+                    {result.top_factors.map((item) => (
+                      <li key={item.feature} className="factor-item">
+                        <strong>{item.feature}</strong>
+                        <span>value: {Number(item.value).toFixed(4)}</span>
+                        <span>impact: {Number(item.impact).toFixed(4)}</span>
+                        <span>direction: {item.direction}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+
               {modelInfo?.metrics && Object.keys(modelInfo.metrics).length > 0 && (
                 <details className="metrics-details">
                   <summary>Model training stats</summary>
@@ -718,6 +796,55 @@ export default function App() {
               </div>
             </section>
           )}
+
+          <section className="card">
+            <h2>Global feature importance</h2>
+            {topImportance.length === 0 ? (
+              <p className="muted">No feature importance available for this model.</p>
+            ) : (
+              <div className="importance-grid">
+                {topImportance.map((row) => (
+                  <div key={row.feature} className="importance-row">
+                    <span>{row.feature}</span>
+                    <span>{(Number(row.importance) * 100).toFixed(1)}%</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="card">
+            <h2>Model comparison</h2>
+            <p className="muted form-subhead">
+              Best model: <strong>{modelInfo?.best_model || "N/A"}</strong>. {modelInfo?.best_model_reason || ""}
+            </p>
+            {comparisonRows.length > 0 ? (
+              <div className="comparison-table-wrap">
+                <table className="comparison-table">
+                  <thead>
+                    <tr>
+                      <th>Model</th>
+                      <th>Accuracy</th>
+                      <th>Precision (malignant)</th>
+                      <th>Recall (malignant)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {comparisonRows.map(([modelName, m]) => (
+                      <tr key={modelName}>
+                        <td>{modelName}</td>
+                        <td>{Number(m.accuracy ?? 0).toFixed(4)}</td>
+                        <td>{Number(m.precision_malignant ?? 0).toFixed(4)}</td>
+                        <td>{Number(m.recall_malignant ?? 0).toFixed(4)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="muted">Model comparison is unavailable.</p>
+            )}
+          </section>
         </>
       )}
 

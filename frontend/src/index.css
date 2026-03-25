@@ -455,6 +455,24 @@ body {
   -moz-appearance: textfield;
 }
 
+.slider {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.range-labels {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  margin-bottom: 8px;
+}
+
+.number-input {
+  margin-top: 4px;
+}
+
 .field input::-webkit-outer-spin-button,
 .field input::-webkit-inner-spin-button { -webkit-appearance: none; }
 
@@ -740,6 +758,76 @@ body {
 /* ─── Probability bars ───────────────────────── */
 
 .bars { margin: 0 0 20px; }
+
+.explain-card {
+  margin-bottom: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.explain-card h3 {
+  margin: 0 0 10px;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.factor-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.factor-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  display: grid;
+  gap: 3px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.importance-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.importance-row {
+  display: flex;
+  justify-content: space-between;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+
+.comparison-table-wrap {
+  overflow-x: auto;
+}
+
+.comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.comparison-table th,
+.comparison-table td {
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  padding: 8px 6px;
+  color: var(--text-dim);
+}
+
+.comparison-table th {
+  color: var(--text);
+  font-weight: 600;
+}
 
 .bar-row { margin-top: 14px; }
 
