@@ -280,5 +280,5 @@ _init_model()
 
 
 if __name__ == "__main__":
-    # Keep debug disabled by default for safer local/container runs.
-    app.run(host="0.0.0.0", port=8000, debug=os.getenv("FLASK_DEBUG", "0") == "1")
+    debug = os.getenv("FLASK_DEBUG", "0") == "1"
+    app.run(host="0.0.0.0", port=8000, debug=debug)

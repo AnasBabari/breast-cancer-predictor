@@ -25,7 +25,7 @@ jobs:
 
       - name: Run backend tests
         run: |
-          python -m pytest -q --cov=backend.main --cov-report=term-missing --cov-fail-under=75 backend/tests
+          python -m pytest -q --cov=backend --cov-config=backend/.coveragerc --cov-fail-under=80 backend/tests
 
   frontend-build:
     runs-on: ubuntu-latest

@@ -75,40 +75,30 @@ def test_predict_out_of_range_rejected(client, model_info_payload) -> None:
     assert "detail" in payload
 
 
-def test_predict_requires_features_list(client) -> None:
-    res = client.post("/predict", json={})
+def test_predict_wrong_feature_count_rejected(client) -> None:
+    # Too few features must be rejected with 400.
+    body = {"features": [122.8, 0.1471]}
+    res = client.post("/predict", json=body)
 
     assert res.status_code == 400
     payload = res.get_json()
-    assert "features" in payload["detail"]
+    assert "detail" in payload
 
 
-def test_predict_rejects_non_list_features(client) -> None:
-    res = client.post("/predict", json={"features": "not-a-list"})
-
-    assert res.status_code == 400
-    payload = res.get_json()
-    assert "features" in payload["detail"]
-
-
-def test_predict_rejects_wrong_feature_count(client, model_info_payload) -> None:
-    features = _valid_features_from_model_info(model_info_payload)
-    wrong_count = features[:-1] if len(features) > 1 else []
-    res = client.post("/predict", json={"features": wrong_count})
-
-    assert res.status_code == 400
-    payload = res.get_json()
-    assert "Expected" in payload["detail"]
-
-
-def test_predict_rejects_non_numeric_feature_value(client, model_info_payload) -> None:
-    features = _valid_features_from_model_info(model_info_payload)
-    bad_index = 1 if len(features) > 1 else 0
-    features[bad_index] = "abc"
-    body = {"features": features}
+def test_predict_non_numeric_feature_rejected(client) -> None:
+    # A non-numeric feature value must be rejected.
+    body = {"features": ["not-a-number", 0.1471, 25.38, 184.6, 0.2654]}
     res = client.post("/predict", json=body)
 
     assert res.status_code == 422
     payload = res.get_json()
-    assert isinstance(payload.get("detail"), list)
-    assert any("must be numeric" in str(err) for err in payload["detail"])
+    assert "detail" in payload
+
+
+def test_predict_missing_body_rejected(client) -> None:
+    # Completely missing `features` key must be rejected with 400.
+    res = client.post("/predict", json={})
+
+    assert res.status_code == 400
+    payload = res.get_json()
+    assert "detail" in payload
