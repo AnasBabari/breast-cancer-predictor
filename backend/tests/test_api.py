@@ -87,7 +87,8 @@ def test_predict_wrong_feature_count_rejected(client, model_info_payload) -> Non
 
 
 def test_predict_non_numeric_feature_rejected(client, model_info_payload) -> None:
-    features = _valid_features_from_model_info(model_info_payload)
+    valid_features = _valid_features_from_model_info(model_info_payload)
+    features: list[float | str] = [*valid_features]
     bad_index = 1 if len(features) > 1 else 0
     features[bad_index] = "not-a-number"
     body = {"features": features}

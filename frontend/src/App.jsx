@@ -376,18 +376,20 @@ export default function App() {
     const cm = bestModelMetrics?.confusion_matrix;
     if (!Array.isArray(cm) || cm.length !== 2) return null;
     if (!Array.isArray(cm[0]) || !Array.isArray(cm[1])) return null;
-    const tn = Number(cm[0][0] ?? 0);
-    const fp = Number(cm[0][1] ?? 0);
-    const fn = Number(cm[1][0] ?? 0);
-    const tp = Number(cm[1][1] ?? 0);
+    // Matrix was produced with labels [0, 1] where 0=malignant and 1=benign.
+    const tp = Number(cm[0][0] ?? 0);
+    const fn = Number(cm[0][1] ?? 0);
+    const fp = Number(cm[1][0] ?? 0);
+    const tn = Number(cm[1][1] ?? 0);
     const total = Math.max(1, tn + fp + fn + tp);
+    const malignantTotal = Math.max(1, tp + fn);
     return {
       tn,
       fp,
       fn,
       tp,
       total,
-      fnRate: fn / total,
+      fnRate: fn / malignantTotal,
     };
   }, [bestModelMetrics]);
 
@@ -872,8 +874,8 @@ export default function App() {
                 </div>
               </div>
               <p className="impact-text">
-                False negatives: <strong>{confusion.fn}</strong> ({(confusion.fnRate * 100).toFixed(1)}% of evaluated samples).
-                Lower is better for safer screening.
+                False negatives: <strong>{confusion.fn}</strong> ({(confusion.fnRate * 100).toFixed(1)}% of actual malignant samples).
+                Lower is better because missed malignant cases are the highest-risk outcome.
               </p>
             </section>
           )}
