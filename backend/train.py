@@ -111,9 +111,11 @@ def train_and_save(k: int = 5, random_state: int = 42) -> None:
             "std": float(col.std()),
         }
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_selected, y, test_size=0.2, random_state=random_state, stratify=y
-    )
+    splits = train_test_split(X_selected, y, test_size=0.2, random_state=random_state, stratify=y)
+    X_train = cast(np.ndarray, splits[0])
+    X_test  = cast(np.ndarray, splits[1])
+    y_train = cast(np.ndarray, splits[2])
+    y_test  = cast(np.ndarray, splits[3])
 
     candidates: dict[str, Pipeline] = {
         "logistic_regression": Pipeline(
