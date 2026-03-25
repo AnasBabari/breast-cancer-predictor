@@ -365,6 +365,32 @@ export default function App() {
     return Object.entries(comparison);
   }, [modelInfo]);
 
+  const bestModelMetrics = useMemo(() => {
+    const best = modelInfo?.best_model;
+    const cmp = modelInfo?.model_comparison;
+    if (!best || !cmp || typeof cmp !== "object") return null;
+    return cmp[best] || null;
+  }, [modelInfo]);
+
+  const confusion = useMemo(() => {
+    const cm = bestModelMetrics?.confusion_matrix;
+    if (!Array.isArray(cm) || cm.length !== 2) return null;
+    if (!Array.isArray(cm[0]) || !Array.isArray(cm[1])) return null;
+    const tn = Number(cm[0][0] ?? 0);
+    const fp = Number(cm[0][1] ?? 0);
+    const fn = Number(cm[1][0] ?? 0);
+    const tp = Number(cm[1][1] ?? 0);
+    const total = Math.max(1, tn + fp + fn + tp);
+    return {
+      tn,
+      fp,
+      fn,
+      tp,
+      total,
+      fnRate: fn / total,
+    };
+  }, [bestModelMetrics]);
+
   const onSubmit = useCallback(
     async (ev) => {
       ev?.preventDefault?.();
@@ -802,16 +828,55 @@ export default function App() {
             {topImportance.length === 0 ? (
               <p className="muted">No feature importance available for this model.</p>
             ) : (
-              <div className="importance-grid">
+              <div className="importance-grid importance-grid--chart">
                 {topImportance.map((row) => (
-                  <div key={row.feature} className="importance-row">
-                    <span>{row.feature}</span>
-                    <span>{(Number(row.importance) * 100).toFixed(1)}%</span>
+                  <div key={row.feature} className="importance-row importance-row--bar">
+                    <div className="importance-head">
+                      <span>{row.feature}</span>
+                      <span>{(Number(row.importance) * 100).toFixed(1)}%</span>
+                    </div>
+                    <div className="importance-track" aria-hidden>
+                      <div
+                        className="importance-fill"
+                        style={{ width: `${Math.max(0, Math.min(100, Number(row.importance) * 100))}%` }}
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
             )}
           </section>
+
+          {confusion && (
+            <section className="card">
+              <h2>Clinical impact view (confusion matrix)</h2>
+              <p className="muted form-subhead">
+                False negatives are high-risk in screening contexts because malignant cases may be missed.
+              </p>
+              <div className="cm-grid" role="img" aria-label="Confusion matrix heatmap">
+                <div className="cm-cell cm-cell--tn">
+                  <span className="cm-label">True Negative</span>
+                  <strong>{confusion.tn}</strong>
+                </div>
+                <div className="cm-cell cm-cell--fp">
+                  <span className="cm-label">False Positive</span>
+                  <strong>{confusion.fp}</strong>
+                </div>
+                <div className="cm-cell cm-cell--fn">
+                  <span className="cm-label">False Negative</span>
+                  <strong>{confusion.fn}</strong>
+                </div>
+                <div className="cm-cell cm-cell--tp">
+                  <span className="cm-label">True Positive</span>
+                  <strong>{confusion.tp}</strong>
+                </div>
+              </div>
+              <p className="impact-text">
+                False negatives: <strong>{confusion.fn}</strong> ({(confusion.fnRate * 100).toFixed(1)}% of evaluated samples).
+                Lower is better for safer screening.
+              </p>
+            </section>
+          )}
 
           <section className="card">
             <h2>Model comparison</h2>

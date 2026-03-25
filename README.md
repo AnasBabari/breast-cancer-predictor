@@ -54,6 +54,16 @@ We report more than accuracy:
 
 This better reflects medical-risk tradeoffs.
 
+## Why mistakes matter (impact thinking)
+
+In this domain, a model can look statistically good but still be clinically weak if it misses malignant cases.
+
+- **False negatives are critical**: a malignant case predicted as benign is the riskiest failure.
+- **Recall (malignant)** is therefore a primary selection metric.
+- **Precision + confusion matrix** are shown to understand tradeoffs, not just one score.
+
+The web app now includes a confusion-matrix heatmap and explicit false-negative emphasis to make this risk visible.
+
 ## Explainability
 
 Two explainability outputs are available:
