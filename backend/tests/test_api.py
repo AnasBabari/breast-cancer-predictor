@@ -75,9 +75,10 @@ def test_predict_out_of_range_rejected(client, model_info_payload) -> None:
     assert "detail" in payload
 
 
-def test_predict_wrong_feature_count_rejected(client) -> None:
-    # Too few features must be rejected with 400.
-    body = {"features": [122.8, 0.1471]}
+def test_predict_wrong_feature_count_rejected(client, model_info_payload) -> None:
+    features = _valid_features_from_model_info(model_info_payload)
+    wrong_count = features[:-1] if len(features) > 1 else []
+    body = {"features": wrong_count}
     res = client.post("/predict", json=body)
 
     assert res.status_code == 400
@@ -85,9 +86,11 @@ def test_predict_wrong_feature_count_rejected(client) -> None:
     assert "detail" in payload
 
 
-def test_predict_non_numeric_feature_rejected(client) -> None:
-    # A non-numeric feature value must be rejected.
-    body = {"features": ["not-a-number", 0.1471, 25.38, 184.6, 0.2654]}
+def test_predict_non_numeric_feature_rejected(client, model_info_payload) -> None:
+    features = _valid_features_from_model_info(model_info_payload)
+    bad_index = 1 if len(features) > 1 else 0
+    features[bad_index] = "not-a-number"
+    body = {"features": features}
     res = client.post("/predict", json=body)
 
     assert res.status_code == 422
