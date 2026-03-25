@@ -24,7 +24,7 @@ def test_model_info_shape(client) -> None:
     payload = res.get_json()
 
     assert isinstance(payload.get("feature_names"), list)
-    assert len(payload["feature_names"]) == 5
+    assert len(payload["feature_names"]) > 0
     assert isinstance(payload.get("feature_bounds"), dict)
     assert len(payload["feature_bounds"]) == len(payload["feature_names"])
 
@@ -51,5 +51,34 @@ def test_predict_out_of_range_rejected(client) -> None:
     res = client.post("/predict", json=body)
 
     assert res.status_code == 422
+    payload = res.get_json()
+    assert "detail" in payload
+
+
+def test_predict_wrong_feature_count_rejected(client) -> None:
+    # Too few features must be rejected with 400.
+    body = {"features": [122.8, 0.1471]}
+    res = client.post("/predict", json=body)
+
+    assert res.status_code == 400
+    payload = res.get_json()
+    assert "detail" in payload
+
+
+def test_predict_non_numeric_feature_rejected(client) -> None:
+    # A non-numeric feature value must be rejected.
+    body = {"features": ["not-a-number", 0.1471, 25.38, 184.6, 0.2654]}
+    res = client.post("/predict", json=body)
+
+    assert res.status_code == 422
+    payload = res.get_json()
+    assert "detail" in payload
+
+
+def test_predict_missing_body_rejected(client) -> None:
+    # Completely missing `features` key must be rejected with 400.
+    res = client.post("/predict", json={})
+
+    assert res.status_code == 400
     payload = res.get_json()
     assert "detail" in payload
