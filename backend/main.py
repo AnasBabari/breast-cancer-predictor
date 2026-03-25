@@ -30,6 +30,14 @@ HIGH_CONFIDENCE = 0.80
 LOW_CONFIDENCE = 0.55
 
 
+def _cors_origins_from_env() -> str | list[str]:
+    raw = os.getenv("CORS_ORIGINS", "*").strip()
+    if raw == "*":
+        return "*"
+    origins = [item.strip() for item in raw.split(",") if item.strip()]
+    return origins or "*"
+
+
 def _load_artifact() -> dict[str, Any]:
     if not os.path.exists(ARTIFACT_PATH):
         raise FileNotFoundError(
@@ -103,6 +111,8 @@ def _compute_top_factors(
     }
     stats: dict[str, dict[str, float]] = dict(artifact.get("feature_stats", {}))
 
+    # For models without per-sample linear coefficients, this is an approximate
+    # local explanation based on z-scored feature deviation times global importance.
     approximated: list[dict[str, Any]] = []
     for idx, name in enumerate(feature_names):
         info = stats.get(name, {})
@@ -134,7 +144,9 @@ app = Flask(
     static_folder=str(FRONTEND_DIST) if FRONTEND_DIST.is_dir() else None,
     static_url_path="",
 )
-CORS(app)
+# Demo default is wildcard CORS. For public deployment, set CORS_ORIGINS
+# to a comma-separated allowlist, e.g. "https://example.com,https://app.example.com".
+CORS(app, resources={r"/*": {"origins": _cors_origins_from_env()}})
 
 
 @app.get("/health")
