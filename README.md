@@ -1,91 +1,55 @@
-# AI Breast Cancer Predictor Tool
+# AI Breast Cancer Predictor Tool v2.0
 
 An educational web application that predicts whether a tumor pattern is **benign** or **malignant** from selected numeric features of the Wisconsin Breast Cancer dataset.
 
-## Problem statement
+## Core philosophy
 
 Early cancer detection errors are costly. In this project, we optimize not just for accuracy, but for **malignant recall**, because missing cancer-like cases is the worst outcome.
+
+## Key features (v2.0)
+
+- **FastAPI Backend**: High performance, strict type validation, and automatic OpenAPI docs.
+- **XGBoost & SVM**: Expanded model candidates with hyperparameter tuning via Grid Search.
+- **SHAP Explainability**: Scientifically grounded local and global feature importance.
+- **Modern UI**: Rebuilt with **Tailwind CSS**, **Recharts**, and **Lucide** for a polished medical dashboard feel.
+- **Interactive Charts**: Dynamic visualization of class probabilities and factor impacts.
 
 ## Dataset
 
 - Source: scikit-learn `load_breast_cancer` (Wisconsin Diagnostic Breast Cancer)
 - Type: tabular, supervised binary classification
-- Labels:
-  - `0 = malignant`
-  - `1 = benign`
+- Labels: `0 = malignant`, `1 = benign`
 
 ## Product architecture
 
-- **Frontend**: React + Vite single-page app
-  - slider-based feature inputs
-  - prediction panel (benign/malignant)
-  - explainability panel (top 3 factors)
-  - model comparison and feature importance visibility
-- **Backend**: Flask API
-  - `GET /health`
-  - `GET /model_info`
-  - `POST /predict`
+- **Frontend**: React (Vite) + Tailwind CSS + Recharts
+  - **FeatureInputs**: Interactive sliders with preset values.
+  - **ResultDisplay**: Real-time prediction analysis with SHAP-based factors.
+  - **ModelComparison**: Radar charts and performance metrics for multiple algorithms.
+- **Backend**: FastAPI (Python 3.12+)
+  - `GET /health`: Service status.
+  - `GET /model_info`: Comprehensive metadata, comparison data, and global importance.
+  - `POST /predict`: Prediction with probability scores and local SHAP explanations.
 
 ## Model choice and comparison
 
 The training pipeline evaluates and compares:
+1. **Logistic Regression** (Optimized with Grid Search)
+2. **Random Forest** (Balanced class weights)
+3. **Linear SVM** (Linear kernel, high recall tuning)
+4. **XGBoost** (Gradient boosting for high precision/recall balance)
 
-1. Logistic Regression
-2. Random Forest
-3. Linear SVM
+**Selection logic**: Models are ranked by `recall_malignant` (primary safety), then `accuracy` (secondary performance).
 
-Best model is selected by:
+## Explainability (SHAP)
 
-1. highest `recall_malignant` (primary safety metric)
-2. then `precision_malignant`
-3. then `accuracy`
-
-Reason is exposed via `/model_info` as `best_model_reason`.
-
-## Evaluation metrics
-
-We report more than accuracy:
-
-- accuracy
-- precision (malignant)
-- recall (malignant)
-- confusion matrix
-- ROC AUC (malignant and benign)
-
-This better reflects medical-risk tradeoffs.
-
-## Why mistakes matter (impact thinking)
-
-In this domain, a model can look statistically good but still be clinically weak if it misses malignant cases.
-
-- **False negatives are critical**: a malignant case predicted as benign is the riskiest failure.
-- **Recall (malignant)** is therefore a primary selection metric.
-- **Precision + confusion matrix** are shown to understand tradeoffs, not just one score.
-
-The web app now includes a confusion-matrix heatmap and explicit false-negative emphasis to make this risk visible.
-
-## Explainability
-
-Two explainability outputs are available:
-
-1. **Global feature importance** (`/model_info`)
-2. **Top 3 factors affecting current prediction** (`/predict` as `top_factors`)
-
-In medical ML workflows, this helps interpretation and trust.
-
+We use **SHAP (SHapley Additive exPlanations)** to provide two levels of insight:
+1. **Global Importance**: Which features the model values most across the entire dataset.
+2. **Local Impact**: For a specific prediction, which factors pushed the result toward "malignant" vs "benign."
 
 ## Disclaimer and limitations
 
-### Disclaimer
-
-This project is an **educational tool**, not a medical device. It must not be used for diagnosis, triage, or treatment decisions.
-
-### Limitations
-
-- trained on one historical dataset
-- no prospective clinical validation
-- does not use imaging, pathology workflow, or patient context
-- model explanations are supportive, not causal clinical evidence
+**Educational tool only.** Not a medical device. Must not be used for diagnosis, triage, or treatment decisions. Trained on historical data without prospective clinical validation.
 
 ## Local setup
 
@@ -95,11 +59,12 @@ This project is an **educational tool**, not a medical device. It must not be us
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r backend/requirements.txt
+# Train the model and generate the artifact
 python backend/train.py
-python backend/main.py
+# Start the server
+uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
-
-Backend will run at `http://127.0.0.1:8000`.
+Backend API docs available at `http://127.0.0.1:8000/docs`.
 
 ### Frontend
 
@@ -108,67 +73,37 @@ cd frontend
 npm install
 npm run dev
 ```
-
-Frontend runs at `http://127.0.0.1:5173`.
+Frontend runs at `http://localhost:5173`.
 
 ## Testing
 
 ```bash
-python -m pytest -q backend/tests
+# Run backend tests (FastAPI + TestClient)
+python -m pytest backend/tests
 ```
-
-Includes API smoke and validation tests.
-
-## CI/CD
-
-GitHub Actions workflow: `.github/workflows/ci.yml`
-
-- runs backend tests on push/PR
-- runs frontend build on push/PR
 
 ## Docker
 
-### Single container
-
-```bash
-docker build -t breast-cancer-predictor .
-docker run --rm -p 8000:8000 breast-cancer-predictor
-```
-
-### Docker Compose
-
+### Build and run
 ```bash
 docker compose up --build
 ```
-
-## Model artifact policy
-
-Current repo keeps `backend/artifacts/model.joblib` for quick startup.
-
-Cleaner alternatives:
-
-1. retrain during setup/CI (no binary in git)
-2. Git LFS for `.joblib` artifacts
-
-Git LFS quick start:
-
-```bash
-git lfs install
-git lfs track "backend/artifacts/*.joblib"
-git add .gitattributes
-```
+The Docker build process automatically trains the model and bundles the optimized frontend.
 
 ## Project structure
 
-```
+```text
 backend/
-  main.py
-  train.py
-  requirements.txt
-  tests/
+  main.py          # FastAPI application & SHAP integration
+  train.py         # ML pipeline (GridSearch + Model Selection)
+  requirements.txt # Dependencies
+  tests/           # API TestClient suite
 frontend/
   src/
-Dockerfile
-docker-compose.yml
-.github/workflows/ci.yml
+    components/    # Modular React components (Tailwind + Recharts)
+    App.jsx        # Main application logic
+    index.css      # Tailwind base styles
+Dockerfile         # Multi-stage production build
+docker-compose.yml # Dev/Test orchestration
+pyproject.toml     # Ruff (linting) configuration
 ```
