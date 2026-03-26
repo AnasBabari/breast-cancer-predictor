@@ -6,56 +6,79 @@ from typing import Any
 
 import joblib
 import numpy as np
-from flask import Flask, jsonify, request, send_from_directory
-from flask_cors import CORS
+import shap
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
-
+# --- Configuration ---
 ARTIFACT_PATH = os.path.join(os.path.dirname(__file__), "artifacts", "model.joblib")
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIST = _PROJECT_ROOT / "frontend" / "dist"
 
-MODEL_ARTIFACT: dict[str, Any] | None = None
-
-FALLBACK_FEATURE_BOUNDS: dict[str, tuple[float, float]] = {
-    "mean perimeter": (40.0, 210.0),
-    "mean concave points": (0.0, 0.23),
-    "worst radius": (7.0, 40.0),
-    "worst perimeter": (45.0, 280.0),
-    "worst concave points": (0.0, 0.32),
-}
-
-FEATURE_BOUNDS: dict[str, tuple[float, float]] = {}
-
 HIGH_CONFIDENCE = 0.80
 LOW_CONFIDENCE = 0.55
 
-
-def _cors_origins_from_env() -> str | list[str]:
-    raw = os.getenv("CORS_ORIGINS", "*").strip()
-    if raw == "*":
-        return "*"
-    origins = [item.strip() for item in raw.split(",") if item.strip()]
-    return origins or "*"
+# --- State ---
+MODEL_ARTIFACT: dict[str, Any] | None = None
+FEATURE_BOUNDS: dict[str, tuple[float, float]] = {}
+SHAP_EXPLAINER: shap.Explainer | None = None
 
 
+# --- Schemas ---
+class PredictRequest(BaseModel):
+    features: list[float] = Field(..., description="List of feature values in order.")
+
+
+class TopFactor(BaseModel):
+    feature: str
+    value: float
+    impact: float
+    direction: str
+
+
+class PredictResponse(BaseModel):
+    label: str
+    probability: float
+    probabilities: dict[str, float]
+    feature_names: list[str]
+    confidence_level: str
+    confidence_note: str
+    top_factors: list[TopFactor]
+    shap_values: dict[str, float] | None = None
+
+
+class ModelInfoResponse(BaseModel):
+    feature_names: list[str]
+    target_names: list[str]
+    metrics: dict[str, Any]
+    feature_bounds: dict[str, list[float]]
+    best_model: str
+    best_model_reason: str
+    model_comparison: dict[str, Any]
+    global_feature_importance: list[dict[str, Any]]
+    disclaimer: str
+    limitations: list[str]
+
+
+# --- Helpers ---
 def _load_artifact() -> dict[str, Any]:
     if not os.path.exists(ARTIFACT_PATH):
         raise FileNotFoundError(
-            f"Missing pretrained artifact at {ARTIFACT_PATH}. "
-            "Run `python backend/train.py` first."
+            f"Missing pretrained artifact at {ARTIFACT_PATH}. Run `python backend/train.py` first."
         )
     artifact = joblib.load(ARTIFACT_PATH)
     if "pipeline" not in artifact or "selected_feature_names" not in artifact:
-        raise ValueError(
-            "Artifact format is invalid: expected keys `pipeline` and `selected_feature_names`."
-        )
+        raise ValueError("Artifact format is invalid.")
     return artifact
 
 
 def _resolve_feature_bounds(artifact: dict[str, Any]) -> dict[str, tuple[float, float]]:
     names = list(artifact.get("selected_feature_names", []))
-    stats: dict[str, dict[str, float]] = dict(artifact.get("feature_stats", {}))
-    resolved: dict[str, tuple[float, float]] = {}
+    stats = dict(artifact.get("feature_stats", {}))
+    resolved = {}
 
     for name in names:
         stat = stats.get(name)
@@ -64,36 +87,86 @@ def _resolve_feature_bounds(artifact: dict[str, Any]) -> dict[str, tuple[float, 
             raw_max = float(stat["max"])
             span = max(raw_max - raw_min, 1e-6)
             margin = 0.10 * span
-            lo = max(0.0, raw_min - margin)
-            hi = raw_max + margin
-            resolved[name] = (lo, hi)
-        elif name in FALLBACK_FEATURE_BOUNDS:
-            resolved[name] = FALLBACK_FEATURE_BOUNDS[name]
+            resolved[name] = (max(0.0, raw_min - margin), raw_max + margin)
         else:
             resolved[name] = (0.0, 1e6)
-
     return resolved
 
 
-def _compute_top_factors(
-    artifact: dict[str, Any],
-    x: np.ndarray,
-    predicted_label: str,
-) -> list[dict[str, Any]]:
-    feature_names: list[str] = list(artifact["selected_feature_names"])
+def _init_shap(artifact: dict[str, Any]):
+    global SHAP_EXPLAINER
     pipeline = artifact["pipeline"]
     clf = pipeline.named_steps["clf"]
     scaler = pipeline.named_steps["scaler"]
+    background = artifact.get("background_data")
 
+    if background is not None:
+        # We explain the classifier, so we need to transform the background data first
+        background_transformed = scaler.transform(background)
+        # Use KernelExplainer for broad compatibility, or TreeExplainer if possible
+        try:
+            if hasattr(clf, "feature_importances_"):
+                SHAP_EXPLAINER = shap.TreeExplainer(clf)
+            else:
+                SHAP_EXPLAINER = shap.KernelExplainer(clf.predict_proba, background_transformed)
+        except Exception as e:
+            print(f"Warning: SHAP initialization failed: {e}")
+
+
+def _compute_explanations(artifact: dict[str, Any], x: np.ndarray, predicted_label: str):
+    pipeline = artifact["pipeline"]
+    scaler = pipeline.named_steps["scaler"]
+    feature_names = artifact["selected_feature_names"]
+
+    x_transformed = scaler.transform(x)
+
+    # Try SHAP first
+    if SHAP_EXPLAINER is not None:
+        try:
+            if isinstance(SHAP_EXPLAINER, shap.KernelExplainer):
+                shap_vals = SHAP_EXPLAINER.shap_values(x_transformed)
+            else:
+                shap_vals = SHAP_EXPLAINER.shap_values(x_transformed)
+
+            # shap_vals can be a list (for each class) or a single array
+            # We want the values for the malignant class (0)
+            if isinstance(shap_vals, list):
+                # For some models, shap returns a list of arrays, one for each class
+                # Malignant is class 0
+                val = shap_vals[0][0]
+            else:
+                # For others, it might be (samples, features, classes) or just (samples, features)
+                val = shap_vals[0, :, 0] if len(shap_vals.shape) == 3 else shap_vals[0]
+
+            top_indices = np.argsort(np.abs(val))[::-1][:3]
+            top_factors = []
+            for idx in top_indices:
+                top_factors.append(
+                    {
+                        "feature": feature_names[idx],
+                        "value": float(x[0, idx]),
+                        "impact": float(abs(val[idx])),
+                        "direction": "malignant" if val[idx] > 0 else "benign",
+                    }
+                )
+
+            shap_map = {name: float(v) for name, v in zip(feature_names, val, strict=False)}
+            return top_factors, shap_map
+        except Exception as e:
+            print(f"Warning: SHAP explanation failed: {e}")
+
+    # Fallback to linear coefficients if available
+    clf = pipeline.named_steps["clf"]
     if hasattr(clf, "coef_"):
-        transformed = scaler.transform(x)[0]
         coef = np.array(clf.coef_, dtype=float)
         coef_1d = coef[0] if coef.ndim > 1 else coef
-        contributions = transformed * coef_1d
+        contributions = x_transformed[0] * coef_1d
         ordering = np.argsort(np.abs(contributions))[::-1][:3]
 
         top = []
         for idx in ordering:
+            # Note: LogisticRegression coef sign depends on class encoding.
+            # Usually, positive means higher class (1=benign).
             toward = "benign" if contributions[idx] >= 0 else "malignant"
             top.append(
                 {
@@ -103,194 +176,137 @@ def _compute_top_factors(
                     "direction": toward,
                 }
             )
-        return top
+        return top, None
 
-    global_importance = list(artifact.get("global_feature_importance", []))
-    importance_map = {
-        str(item["feature"]): float(item["importance"]) for item in global_importance
-    }
-    stats: dict[str, dict[str, float]] = dict(artifact.get("feature_stats", {}))
-
-    # For models without per-sample linear coefficients, this is an approximate
-    # local explanation based on z-scored feature deviation times global importance.
-    approximated: list[dict[str, Any]] = []
-    for idx, name in enumerate(feature_names):
-        info = stats.get(name, {})
-        mean = float(info.get("mean", 0.0))
-        std = float(info.get("std", 1.0)) or 1.0
-        z = abs((float(x[0, idx]) - mean) / std)
-        approx_impact = z * importance_map.get(name, 0.0)
-        approximated.append(
-            {
-                "feature": name,
-                "value": float(x[0, idx]),
-                "impact": float(approx_impact),
-                "direction": predicted_label,
-            }
-        )
-
-    approximated.sort(key=lambda item: float(item["impact"]), reverse=True)
-    return approximated[:3]
+    return [], None
 
 
-def _init_model() -> None:
-    global MODEL_ARTIFACT, FEATURE_BOUNDS
-    MODEL_ARTIFACT = _load_artifact()
-    FEATURE_BOUNDS = _resolve_feature_bounds(MODEL_ARTIFACT)
+# --- FastAPI App ---
+app = FastAPI(title="AI Breast Cancer Predictor Tool API")
 
-
-app = Flask(
-    __name__,
-    static_folder=str(FRONTEND_DIST) if FRONTEND_DIST.is_dir() else None,
-    static_url_path="",
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[os.getenv("CORS_ORIGINS", "*")],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
-# Demo default is wildcard CORS. For public deployment, set CORS_ORIGINS
-# to a comma-separated allowlist, e.g. "https://example.com,https://app.example.com".
-CORS(app, resources={r"/*": {"origins": _cors_origins_from_env()}})
+
+
+@app.on_event("startup")
+async def startup_event():
+    global MODEL_ARTIFACT, FEATURE_BOUNDS
+    try:
+        MODEL_ARTIFACT = _load_artifact()
+        FEATURE_BOUNDS = _resolve_feature_bounds(MODEL_ARTIFACT)
+        _init_shap(MODEL_ARTIFACT)
+    except Exception as e:
+        print(f"Error during startup: {e}")
 
 
 @app.get("/health")
-def health() -> Any:
-    return jsonify({"status": "ok"})
+def health():
+    return {"status": "ok"}
 
 
-@app.get("/model_info")
-def model_info() -> Any:
-    if MODEL_ARTIFACT is None:
-        return jsonify({"error": "Model artifact not loaded"}), 500
+@app.get("/model_info", response_model=ModelInfoResponse)
+def get_model_info():
+    if not MODEL_ARTIFACT:
+        raise HTTPException(status_code=500, detail="Model not loaded")
 
     feature_names = list(MODEL_ARTIFACT["selected_feature_names"])
-    bounds = {name: FEATURE_BOUNDS.get(name, (0.0, 1e6)) for name in feature_names}
+    bounds = {name: list(FEATURE_BOUNDS.get(name, (0.0, 1e6))) for name in feature_names}
 
-    return jsonify(
-        {
-            "feature_names": feature_names,
-            "target_names": list(MODEL_ARTIFACT["target_names"]),
-            "metrics": dict(MODEL_ARTIFACT.get("metrics", {})),
-            "feature_bounds": bounds,
-            "best_model": str(MODEL_ARTIFACT.get("best_model_name", "unknown")),
-            "best_model_reason": str(MODEL_ARTIFACT.get("best_model_reason", "")),
-            "model_comparison": dict(MODEL_ARTIFACT.get("model_comparison", {})),
-            "global_feature_importance": list(MODEL_ARTIFACT.get("global_feature_importance", [])),
-            "disclaimer": "Educational tool only. Not for diagnosis or treatment decisions.",
-            "limitations": [
-                "Trained on a single historical dataset.",
-                "Not validated for clinical deployment.",
-                "Should not replace pathology, imaging, or physician judgement.",
-            ],
-        }
-    )
+    return {
+        "feature_names": feature_names,
+        "target_names": list(MODEL_ARTIFACT["target_names"]),
+        "metrics": dict(MODEL_ARTIFACT.get("metrics", {})),
+        "feature_bounds": bounds,
+        "best_model": str(MODEL_ARTIFACT.get("best_model_name", "unknown")),
+        "best_model_reason": str(MODEL_ARTIFACT.get("best_model_reason", "")),
+        "model_comparison": dict(MODEL_ARTIFACT.get("model_comparison", {})),
+        "global_feature_importance": list(MODEL_ARTIFACT.get("global_feature_importance", [])),
+        "disclaimer": "Educational tool only. Not for diagnosis or treatment decisions.",
+        "limitations": [
+            "Trained on a single historical dataset.",
+            "Not validated for clinical deployment.",
+            "Should not replace pathology, imaging, or physician judgement.",
+        ],
+    }
 
 
-@app.post("/predict")
-def predict() -> Any:
-    if MODEL_ARTIFACT is None:
-        return jsonify({"detail": "Model artifact not loaded"}), 500
+@app.post("/predict", response_model=PredictResponse)
+def predict(request: PredictRequest):
+    if not MODEL_ARTIFACT:
+        raise HTTPException(status_code=500, detail="Model not loaded")
 
-    data = request.get_json(silent=True) or {}
-    features = data.get("features")
-    if not isinstance(features, list):
-        return jsonify({"detail": "Request body must include `features` list."}), 400
+    feature_names = list(MODEL_ARTIFACT["selected_feature_names"])
+    if len(request.features) != len(feature_names):
+        raise HTTPException(status_code=400, detail=f"Expected {len(feature_names)} features.")
 
-    feature_names: list[str] = list(MODEL_ARTIFACT["selected_feature_names"])
-    expected_len = len(feature_names)
-    if len(features) != expected_len:
-        return jsonify({"detail": f"Expected {expected_len} features."}), 400
-
-    values: list[float] = []
-    errors: list[str] = []
-    for name, raw in zip(feature_names, features):
-        try:
-            value = float(raw)
-        except Exception:
-            errors.append(f"'{name}' must be numeric.")
-            continue
-
+    # Validation
+    errors = []
+    for name, val in zip(feature_names, request.features, strict=False):
         lo, hi = FEATURE_BOUNDS.get(name, (0.0, 1e6))
-        if not (lo <= value <= hi):
-            errors.append(f"'{name}': {value} outside expected range [{lo}, {hi}].")
-        values.append(value)
+        if not (lo <= val <= hi):
+            errors.append(f"'{name}': {val} outside expected range [{lo:.2f}, {hi:.2f}].")
 
     if errors:
-        return jsonify({"detail": errors}), 422
+        raise HTTPException(status_code=422, detail=errors)
 
-    x = np.array(values, dtype=float).reshape(1, -1)
+    x = np.array(request.features).reshape(1, -1)
+    pipeline = MODEL_ARTIFACT["pipeline"]
 
     try:
-        proba: np.ndarray = MODEL_ARTIFACT["pipeline"].predict_proba(x)[0]
-    except Exception as exc:
-        return jsonify({"detail": f"Prediction failed: {exc}"}), 500
+        proba = pipeline.predict_proba(x)[0]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {e}") from e
 
     classes = list(MODEL_ARTIFACT["classes"])
-    target_names: list[str] = list(MODEL_ARTIFACT["target_names"])
+    target_names = list(MODEL_ARTIFACT["target_names"])
     class_to_label = {cls: target_names[int(cls)] for cls in classes}
-    probabilities = {class_to_label[cls]: float(p) for cls, p in zip(classes, proba)}
+    probabilities = {class_to_label[cls]: float(p) for cls, p in zip(classes, proba, strict=False)}
 
-    label = max(probabilities, key=lambda k: probabilities[k])
-    probability = float(probabilities[label])
+    label = max(probabilities, key=probabilities.get)
+    probability = probabilities[label]
 
     if probability >= HIGH_CONFIDENCE:
         confidence_level = "high"
-        confidence_note = (
-            f"The model is fairly confident ({probability:.0%}). "
-            "Still educational, not clinical."
-        )
+        confidence_note = f"Fairly confident ({probability:.0%}). Educational only."
     elif probability >= LOW_CONFIDENCE:
         confidence_level = "moderate"
-        confidence_note = f"The model has moderate confidence ({probability:.0%})."
+        confidence_note = f"Moderate confidence ({probability:.0%})."
     else:
         confidence_level = "uncertain"
-        confidence_note = f"The model is uncertain ({probability:.0%})."
+        confidence_note = f"Uncertain ({probability:.0%})."
 
-    top_factors = _compute_top_factors(
-        artifact=MODEL_ARTIFACT,
-        x=x,
-        predicted_label=label,
-    )
+    top_factors, shap_values = _compute_explanations(MODEL_ARTIFACT, x, label)
 
-    return jsonify(
-        {
-            "label": label,
-            "probability": probability,
-            "probabilities": probabilities,
-            "feature_names": feature_names,
-            "confidence_level": confidence_level,
-            "confidence_note": confidence_note,
-            "top_factors": top_factors,
-        }
-    )
+    return {
+        "label": label,
+        "probability": probability,
+        "probabilities": probabilities,
+        "feature_names": feature_names,
+        "confidence_level": confidence_level,
+        "confidence_note": confidence_note,
+        "top_factors": top_factors,
+        "shap_values": shap_values,
+    }
 
 
-@app.get("/docs")
-def docs() -> Any:
-    return jsonify(
-        {
-            "name": "AI Breast Cancer Predictor Tool API",
-            "routes": {
-                "GET /health": "Service health",
-                "GET /model_info": "Model metadata, comparison, and feature importance",
-                "POST /predict": "Prediction + confidence + top 3 factors",
-            },
-        }
-    )
+# Serving Frontend
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
-
-if FRONTEND_DIST.is_dir():
-    @app.route("/")
-    def index() -> Any:
-        return send_from_directory(str(FRONTEND_DIST), "index.html")
-
-    @app.route("/<path:path>")
-    def static_proxy(path: str) -> Any:
-        full = FRONTEND_DIST / path
-        if full.exists() and full.is_file():
-            return send_from_directory(str(FRONTEND_DIST), path)
-        return send_from_directory(str(FRONTEND_DIST), "index.html")
-
-
-_init_model()
+    @app.get("/{rest_of_path:path}")
+    async def serve_frontend(rest_of_path: str):
+        file_path = FRONTEND_DIST / rest_of_path
+        if file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(FRONTEND_DIST / "index.html")
 
 
 if __name__ == "__main__":
-    debug = os.getenv("FLASK_DEBUG", "0") == "1"
-    app.run(host="0.0.0.0", port=8000, debug=debug)
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)

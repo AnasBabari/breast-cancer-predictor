@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
 
 from backend.main import app
 
 
 @pytest.fixture()
 def client():
-    app.config["TESTING"] = True
-    with app.test_client() as c:
+    with TestClient(app) as c:
         yield c
 
 
@@ -16,7 +16,7 @@ def client():
 def model_info_payload(client):
     res = client.get("/model_info")
     assert res.status_code == 200
-    return res.get_json()
+    return res.json()
 
 
 def _valid_features_from_model_info(payload) -> list[float]:
@@ -35,7 +35,7 @@ def _valid_features_from_model_info(payload) -> list[float]:
 def test_health_ok(client) -> None:
     res = client.get("/health")
     assert res.status_code == 200
-    assert res.get_json() == {"status": "ok"}
+    assert res.json() == {"status": "ok"}
 
 
 def test_model_info_shape(model_info_payload) -> None:
@@ -52,7 +52,7 @@ def test_predict_smoke(client, model_info_payload) -> None:
     res = client.post("/predict", json=body)
 
     assert res.status_code == 200
-    payload = res.get_json()
+    payload = res.json()
 
     assert payload["label"] in {"benign", "malignant"}
     assert 0.0 <= float(payload["probability"]) <= 1.0
@@ -71,7 +71,7 @@ def test_predict_out_of_range_rejected(client, model_info_payload) -> None:
     res = client.post("/predict", json=body)
 
     assert res.status_code == 422
-    payload = res.get_json()
+    payload = res.json()
     assert "detail" in payload
 
 
@@ -82,11 +82,12 @@ def test_predict_wrong_feature_count_rejected(client, model_info_payload) -> Non
     res = client.post("/predict", json=body)
 
     assert res.status_code == 400
-    payload = res.get_json()
+    payload = res.json()
     assert "detail" in payload
 
 
 def test_predict_non_numeric_feature_rejected(client, model_info_payload) -> None:
+    # FastAPI/Pydantic returns 422 for type errors in JSON
     valid_features = _valid_features_from_model_info(model_info_payload)
     features: list[float | str] = [*valid_features]
     bad_index = 1 if len(features) > 1 else 0
@@ -95,14 +96,14 @@ def test_predict_non_numeric_feature_rejected(client, model_info_payload) -> Non
     res = client.post("/predict", json=body)
 
     assert res.status_code == 422
-    payload = res.get_json()
+    payload = res.json()
     assert "detail" in payload
 
 
 def test_predict_missing_body_rejected(client) -> None:
-    # Completely missing `features` key must be rejected with 400.
+    # FastAPI returns 422 Unprocessable Entity for missing required fields
     res = client.post("/predict", json={})
 
-    assert res.status_code == 400
-    payload = res.get_json()
+    assert res.status_code == 422
+    payload = res.json()
     assert "detail" in payload
