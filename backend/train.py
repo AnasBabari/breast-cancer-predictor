@@ -190,7 +190,6 @@ def train_and_save(k: int = 5, random_state: int = 42) -> None:
                         "clf",
                         XGBClassifier(
                             random_state=random_state,
-                            use_label_encoder=False,
                             eval_metric="logloss",
                         ),
                     ),
@@ -284,3 +283,4 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
     args = parser.parse_args()
     train_and_save(k=args.k, random_state=args.seed)
+   train_and_save(k=args.k, random_state=args.seed)

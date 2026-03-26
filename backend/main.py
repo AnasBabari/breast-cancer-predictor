@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -101,14 +102,16 @@ def _init_shap(artifact: dict[str, Any]):
     background = artifact.get("background_data")
 
     if background is not None:
-        # We explain the classifier, so we need to transform the background data first
         background_transformed = scaler.transform(background)
-        # Use KernelExplainer for broad compatibility, or TreeExplainer if possible
         try:
+            # Tree-based models (XGBoost, Random Forest)
             if hasattr(clf, "feature_importances_"):
                 SHAP_EXPLAINER = shap.TreeExplainer(clf)
             else:
-                SHAP_EXPLAINER = shap.KernelExplainer(clf.predict_proba, background_transformed)
+                # Fallback to KernelExplainer only if really needed,
+                # but it's slow. Linear models don't need it.
+                if not hasattr(clf, "coef_"):
+                    SHAP_EXPLAINER = shap.KernelExplainer(clf.predict_proba, background_transformed)
         except Exception as e:
             print(f"Warning: SHAP initialization failed: {e}")
 
@@ -117,10 +120,17 @@ def _compute_explanations(artifact: dict[str, Any], x: np.ndarray, predicted_lab
     pipeline = artifact["pipeline"]
     scaler = pipeline.named_steps["scaler"]
     feature_names = artifact["selected_feature_names"]
+    classes = list(artifact["classes"])
+
+    # Malignant is class 0 in this dataset
+    try:
+        mal_idx = classes.index(0)
+    except ValueError:
+        mal_idx = 0
 
     x_transformed = scaler.transform(x)
 
-    # Try SHAP first
+    # 1. Try SHAP (best for non-linear/tree models)
     if SHAP_EXPLAINER is not None:
         try:
             if isinstance(SHAP_EXPLAINER, shap.KernelExplainer):
@@ -128,15 +138,10 @@ def _compute_explanations(artifact: dict[str, Any], x: np.ndarray, predicted_lab
             else:
                 shap_vals = SHAP_EXPLAINER.shap_values(x_transformed)
 
-            # shap_vals can be a list (for each class) or a single array
-            # We want the values for the malignant class (0)
             if isinstance(shap_vals, list):
-                # For some models, shap returns a list of arrays, one for each class
-                # Malignant is class 0
-                val = shap_vals[0][0]
+                val = shap_vals[mal_idx][0]
             else:
-                # For others, it might be (samples, features, classes) or just (samples, features)
-                val = shap_vals[0, :, 0] if len(shap_vals.shape) == 3 else shap_vals[0]
+                val = shap_vals[0, :, mal_idx] if len(shap_vals.shape) == 3 else shap_vals[0]
 
             top_indices = np.argsort(np.abs(val))[::-1][:3]
             top_factors = []
@@ -146,6 +151,7 @@ def _compute_explanations(artifact: dict[str, Any], x: np.ndarray, predicted_lab
                         "feature": feature_names[idx],
                         "value": float(x[0, idx]),
                         "impact": float(abs(val[idx])),
+                        # Positive SHAP for malignant class means it pushes toward Malignant
                         "direction": "malignant" if val[idx] > 0 else "benign",
                     }
                 )
@@ -155,19 +161,20 @@ def _compute_explanations(artifact: dict[str, Any], x: np.ndarray, predicted_lab
         except Exception as e:
             print(f"Warning: SHAP explanation failed: {e}")
 
-    # Fallback to linear coefficients if available
+    # 2. Fallback to linear coefficients (for LogisticRegression, SVM)
     clf = pipeline.named_steps["clf"]
     if hasattr(clf, "coef_"):
         coef = np.array(clf.coef_, dtype=float)
         coef_1d = coef[0] if coef.ndim > 1 else coef
-        contributions = x_transformed[0] * coef_1d
+        # coef[0] is for class 1 (benign) in many sklearn models,
+        # but we want to know what pushes toward malignant (0).
+        # We invert the sign to show impact toward Malignant.
+        contributions = x_transformed[0] * (-coef_1d)
         ordering = np.argsort(np.abs(contributions))[::-1][:3]
 
         top = []
         for idx in ordering:
-            # Note: LogisticRegression coef sign depends on class encoding.
-            # Usually, positive means higher class (1=benign).
-            toward = "benign" if contributions[idx] >= 0 else "malignant"
+            toward = "malignant" if contributions[idx] >= 0 else "benign"
             top.append(
                 {
                     "feature": feature_names[idx],
@@ -181,27 +188,32 @@ def _compute_explanations(artifact: dict[str, Any], x: np.ndarray, predicted_lab
     return [], None
 
 
-# --- FastAPI App ---
-app = FastAPI(title="AI Breast Cancer Predictor Tool API")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[os.getenv("CORS_ORIGINS", "*")],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-@app.on_event("startup")
-async def startup_event():
+# --- Lifespan ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global MODEL_ARTIFACT, FEATURE_BOUNDS
+    # Fail fast on startup if model cannot be loaded
     try:
         MODEL_ARTIFACT = _load_artifact()
         FEATURE_BOUNDS = _resolve_feature_bounds(MODEL_ARTIFACT)
         _init_shap(MODEL_ARTIFACT)
     except Exception as e:
-        print(f"Error during startup: {e}")
+        print(f"CRITICAL: Application startup failed: {e}")
+        # In production, we might want to exit here
+        raise RuntimeError(f"Could not initialize model artifact: {e}") from e
+    yield
+
+
+# --- FastAPI App ---
+app = FastAPI(title="AI Breast Cancer Predictor Tool API", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[os.getenv("CORS_ORIGINS", "*")],
+    allow_credentials=False,  # Wildcard origins + allow_credentials is invalid
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")
