@@ -74,7 +74,7 @@ def _evaluate_model(
         param_grid,
         scoring=scorer,
         cv=5,
-        n_jobs=-1,
+        n_jobs=1,
     )
     grid_search.fit(x_train, y_train)
 
@@ -283,4 +283,3 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
     args = parser.parse_args()
     train_and_save(k=args.k, random_state=args.seed)
-   train_and_save(k=args.k, random_state=args.seed)
