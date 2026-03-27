@@ -18,5 +18,10 @@ export default defineConfig(({ mode }) => {
         "/redoc": { target: apiTarget, changeOrigin: true },
       },
     },
+    test: {
+      globals: true,
+      environment: "jsdom",
+      setupFiles: "./src/tests/setup.js",
+    },
   };
 });

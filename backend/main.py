@@ -8,11 +8,14 @@ from typing import Any
 import joblib
 import numpy as np
 import shap
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # --- Configuration ---
 ARTIFACT_PATH = os.path.join(os.path.dirname(__file__), "artifacts", "model.joblib")
@@ -27,6 +30,8 @@ MODEL_ARTIFACT: dict[str, Any] | None = None
 FEATURE_BOUNDS: dict[str, tuple[float, float]] = {}
 SHAP_EXPLAINER: shap.Explainer | None = None
 
+# --- Rate Limiter ---
+limiter = Limiter(key_func=get_remote_address)
 
 # --- Schemas ---
 class PredictRequest(BaseModel):
@@ -206,6 +211,8 @@ async def lifespan(app: FastAPI):
 
 # --- FastAPI App ---
 app = FastAPI(title="AI Breast Cancer Predictor Tool API", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -248,17 +255,18 @@ def get_model_info():
 
 
 @app.post("/predict", response_model=PredictResponse)
-def predict(request: PredictRequest):
+@limiter.limit("30/minute")
+def predict(request: Request, body: PredictRequest):
     if not MODEL_ARTIFACT:
         raise HTTPException(status_code=500, detail="Model not loaded")
 
     feature_names = list(MODEL_ARTIFACT["selected_feature_names"])
-    if len(request.features) != len(feature_names):
+    if len(body.features) != len(feature_names):
         raise HTTPException(status_code=400, detail=f"Expected {len(feature_names)} features.")
 
     # Validation
     errors = []
-    for name, val in zip(feature_names, request.features, strict=False):
+    for name, val in zip(feature_names, body.features, strict=False):
         lo, hi = FEATURE_BOUNDS.get(name, (0.0, 1e6))
         if not (lo <= val <= hi):
             errors.append(f"'{name}': {val} outside expected range [{lo:.2f}, {hi:.2f}].")
@@ -266,7 +274,7 @@ def predict(request: PredictRequest):
     if errors:
         raise HTTPException(status_code=422, detail=errors)
 
-    x = np.array(request.features).reshape(1, -1)
+    x = np.array(body.features).reshape(1, -1)
     pipeline = MODEL_ARTIFACT["pipeline"]
 
     try:
