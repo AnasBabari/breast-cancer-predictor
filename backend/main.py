@@ -40,7 +40,9 @@ class PredictRequest(BaseModel):
 
 
 class BatchPredictRequest(BaseModel):
-    samples: list[list[float]] = Field(..., max_length=100, description="List of samples, each a list of features.")
+    samples: list[list[float]] = Field(
+        ..., max_length=100, description="List of samples, each a list of features."
+    )
 
 
 class TopFactor(BaseModel):
@@ -338,7 +340,9 @@ def predict_batch(request: Request, body: BatchPredictRequest):
     results = []
     for features in body.samples:
         if len(features) != len(feature_names):
-            raise HTTPException(status_code=400, detail="One or more samples have wrong feature count.")
+            raise HTTPException(
+                status_code=400, detail="One or more samples have wrong feature count."
+            )
 
         x = np.array(features).reshape(1, -1)
         try:
@@ -346,7 +350,9 @@ def predict_batch(request: Request, body: BatchPredictRequest):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Prediction failed: {e}") from e
 
-        probabilities = {class_to_label[cls]: float(p) for cls, p in zip(classes, proba, strict=False)}
+        probabilities = {
+            class_to_label[cls]: float(p) for cls, p in zip(classes, proba, strict=False)
+        }
         label = max(probabilities, key=probabilities.get)
         probability = probabilities[label]
 
