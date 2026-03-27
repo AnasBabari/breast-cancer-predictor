@@ -33,9 +33,14 @@ SHAP_EXPLAINER: shap.Explainer | None = None
 # --- Rate Limiter ---
 limiter = Limiter(key_func=get_remote_address)
 
+
 # --- Schemas ---
 class PredictRequest(BaseModel):
     features: list[float] = Field(..., description="List of feature values in order.")
+
+
+class BatchPredictRequest(BaseModel):
+    samples: list[list[float]] = Field(..., max_length=100, description="List of samples, each a list of features.")
 
 
 class TopFactor(BaseModel):
@@ -54,6 +59,10 @@ class PredictResponse(BaseModel):
     confidence_note: str
     top_factors: list[TopFactor]
     shap_values: dict[str, float] | None = None
+
+
+class BatchPredictResponse(BaseModel):
+    results: list[PredictResponse]
 
 
 class ModelInfoResponse(BaseModel):
@@ -193,6 +202,15 @@ def _compute_explanations(artifact: dict[str, Any], x: np.ndarray, predicted_lab
     return [], None
 
 
+def _get_confidence(probability: float) -> tuple[str, str]:
+    if probability >= HIGH_CONFIDENCE:
+        return "high", f"Fairly confident ({probability:.0%}). Educational only."
+    elif probability >= LOW_CONFIDENCE:
+        return "moderate", f"Moderate confidence ({probability:.0%})."
+    else:
+        return "uncertain", f"Uncertain ({probability:.0%})."
+
+
 # --- Lifespan ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -290,16 +308,7 @@ def predict(request: Request, body: PredictRequest):
     label = max(probabilities, key=probabilities.get)
     probability = probabilities[label]
 
-    if probability >= HIGH_CONFIDENCE:
-        confidence_level = "high"
-        confidence_note = f"Fairly confident ({probability:.0%}). Educational only."
-    elif probability >= LOW_CONFIDENCE:
-        confidence_level = "moderate"
-        confidence_note = f"Moderate confidence ({probability:.0%})."
-    else:
-        confidence_level = "uncertain"
-        confidence_note = f"Uncertain ({probability:.0%})."
-
+    confidence_level, confidence_note = _get_confidence(probability)
     top_factors, shap_values = _compute_explanations(MODEL_ARTIFACT, x, label)
 
     return {
@@ -312,6 +321,51 @@ def predict(request: Request, body: PredictRequest):
         "top_factors": top_factors,
         "shap_values": shap_values,
     }
+
+
+@app.post("/predict/batch", response_model=BatchPredictResponse)
+@limiter.limit("10/minute")
+def predict_batch(request: Request, body: BatchPredictRequest):
+    if not MODEL_ARTIFACT:
+        raise HTTPException(status_code=500, detail="Model not loaded")
+
+    feature_names = list(MODEL_ARTIFACT["selected_feature_names"])
+    pipeline = MODEL_ARTIFACT["pipeline"]
+    classes = list(MODEL_ARTIFACT["classes"])
+    target_names = list(MODEL_ARTIFACT["target_names"])
+    class_to_label = {cls: target_names[int(cls)] for cls in classes}
+
+    results = []
+    for features in body.samples:
+        if len(features) != len(feature_names):
+            raise HTTPException(status_code=400, detail="One or more samples have wrong feature count.")
+
+        x = np.array(features).reshape(1, -1)
+        try:
+            proba = pipeline.predict_proba(x)[0]
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Prediction failed: {e}") from e
+
+        probabilities = {class_to_label[cls]: float(p) for cls, p in zip(classes, proba, strict=False)}
+        label = max(probabilities, key=probabilities.get)
+        probability = probabilities[label]
+
+        confidence_level, confidence_note = _get_confidence(probability)
+        # Skip heavy SHAP for batch processing to keep it fast
+        # but keep basic coefficient factors if linear
+        top_factors, _ = _compute_explanations(MODEL_ARTIFACT, x, label)
+
+        results.append({
+            "label": label,
+            "probability": probability,
+            "probabilities": probabilities,
+            "feature_names": feature_names,
+            "confidence_level": confidence_level,
+            "confidence_note": confidence_note,
+            "top_factors": top_factors,
+        })
+
+    return {"results": results}
 
 
 # Serving Frontend

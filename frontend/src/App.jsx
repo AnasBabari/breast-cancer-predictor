@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
 import { 
   Activity, 
-  History, 
   LayoutDashboard, 
   RefreshCcw, 
   Settings2, 
   ShieldAlert,
   Menu,
   X,
-  Stethoscope
+  Stethoscope,
+  FileSpreadsheet
 } from "lucide-react";
 import { Button, Card, Alert, cn } from "./components/ui";
 import { FeatureInputs } from "./components/FeatureInputs";
 import { ResultDisplay } from "./components/ResultDisplay";
 import { ModelComparison } from "./components/ModelComparison";
+import { BatchUpload } from "./components/BatchUpload";
+import { BatchResults } from "./components/BatchResults";
 
 const STORAGE_KEY = "bcp:form-values:v1";
 const HISTORY_KEY = "bcp:prediction-history:v1";
@@ -44,6 +46,10 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [activeTab, setActiveTab] = useState("predict");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  
+  // Batch states
+  const [batchResults, setBatchResults] = useState(null);
+  const [originalBatchData, setOriginalBatchData] = useState(null);
 
   // Initialize
   useEffect(() => {
@@ -144,6 +150,16 @@ export default function App() {
     setResult(null);
   };
 
+  const handleBatchResults = (results, originalData) => {
+    setBatchResults(results);
+    setOriginalBatchData(originalData);
+  };
+
+  const handleBatchReset = () => {
+    setBatchResults(null);
+    setOriginalBatchData(null);
+  };
+
   if (!modelInfo && !loadError) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -190,7 +206,16 @@ export default function App() {
                 activeTab === "predict" ? "bg-medical-50 text-medical-700 shadow-sm" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
               )}
             >
-              <LayoutDashboard className="w-5 h-5" /> Prediction
+              <LayoutDashboard className="w-5 h-5" /> Single Prediction
+            </button>
+            <button
+              onClick={() => { setActiveTab("batch"); setIsSidebarOpen(false); }}
+              className={cn(
+                "w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all font-medium",
+                activeTab === "batch" ? "bg-medical-50 text-medical-700 shadow-sm" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+              )}
+            >
+              <FileSpreadsheet className="w-5 h-5" /> Batch Processing
             </button>
             <button
               onClick={() => { setActiveTab("compare"); setIsSidebarOpen(false); }}
@@ -248,8 +273,8 @@ export default function App() {
             </Alert>
           )}
 
-          {activeTab === "predict" ? (
-            <div className="grid grid-cols-1 xl:grid-cols-12 gap-10 items-start">
+          {activeTab === "predict" && (
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-10 items-start animate-fade-in">
               <div className="xl:col-span-7 space-y-10">
                 <FeatureInputs 
                   featureNames={modelInfo.feature_names}
@@ -278,14 +303,35 @@ export default function App() {
                 )}
               </div>
             </div>
-          ) : (
-            <ModelComparison modelInfo={modelInfo} />
+          )}
+
+          {activeTab === "batch" && (
+            <div className="max-w-4xl mx-auto animate-fade-in">
+              {!batchResults ? (
+                <BatchUpload 
+                  featureNames={modelInfo.feature_names} 
+                  onResults={handleBatchResults} 
+                />
+              ) : (
+                <BatchResults 
+                  results={batchResults} 
+                  originalData={originalBatchData} 
+                  onReset={handleBatchReset}
+                />
+              )}
+            </div>
+          )}
+
+          {activeTab === "compare" && (
+            <div className="animate-fade-in">
+              <ModelComparison modelInfo={modelInfo} />
+            </div>
           )}
 
           <footer className="pt-10 border-t border-slate-200 flex flex-col md:flex-row justify-between items-center gap-4 text-xs text-slate-400 font-medium">
              <p>© 2026 AI Breast Cancer Predictor Tool</p>
              <div className="flex gap-6">
-               <span className="flex items-center gap-1"><Settings2 className="w-3 h-3" /> Version 2.0 (FastAPI + XGBoost + SHAP)</span>
+               <span className="flex items-center gap-1"><Settings2 className="w-3 h-3" /> Version 2.2 (Batch CSV Processing)</span>
                <a href="/docs" target="_blank" className="hover:text-medical-600 transition-colors">API Documentation</a>
              </div>
           </footer>

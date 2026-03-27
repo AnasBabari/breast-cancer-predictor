@@ -107,3 +107,15 @@ def test_predict_missing_body_rejected(client) -> None:
     assert res.status_code == 422
     payload = res.json()
     assert "detail" in payload
+
+
+def test_predict_batch_smoke(client, model_info_payload) -> None:
+    valid_features = _valid_features_from_model_info(model_info_payload)
+    body = {"samples": [valid_features, valid_features]}
+    res = client.post("/predict/batch", json=body)
+
+    assert res.status_code == 200
+    payload = res.json()
+    assert "results" in payload
+    assert len(payload["results"]) == 2
+    assert payload["results"][0]["label"] in {"benign", "malignant"}
