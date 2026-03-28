@@ -1,6 +1,6 @@
 import { useState } from "react";
 import Papa from "papaparse";
-import { Upload, FileDown, AlertCircle, CheckCircle2, Loader2, Info } from "lucide-react";
+import { Upload, FileDown, AlertCircle, CheckCircle2, Loader2, Info, Eye } from "lucide-react";
 import { Button, Card, Alert, cn } from "./ui";
 
 export function BatchUpload({ featureNames, onResults }) {
@@ -90,7 +90,10 @@ export function BatchUpload({ featureNames, onResults }) {
     const a = document.createElement("a");
     a.href = url;
     a.download = "bcp_template.csv";
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -118,17 +121,48 @@ export function BatchUpload({ featureNames, onResults }) {
         </label>
 
         {file && !error && (
-          <div className="flex items-center justify-between p-3 bg-medical-50 border border-medical-100 rounded-lg">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-medical-600" />
-              <span className="text-sm font-medium text-medical-800">{file.name}</span>
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center justify-between p-3 bg-medical-50 border border-medical-100 rounded-lg">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-medical-600" />
+                <span className="text-sm font-medium text-medical-800">{file.name}</span>
+              </div>
+              <span className="text-xs text-medical-600 font-mono">Ready to process</span>
             </div>
-            <span className="text-xs text-medical-600 font-mono">Ready to process</span>
+
+            {preview && (
+              <div className="border rounded-lg overflow-hidden">
+                <div className="bg-slate-50 px-3 py-2 border-b flex items-center gap-2">
+                  <Eye className="w-3 h-3 text-slate-400" />
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Data Preview (First 5 rows)</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[10px] text-left">
+                    <thead>
+                      <tr className="bg-white border-b">
+                        {featureNames.map(n => (
+                          <th key={n} className="px-3 py-2 font-semibold text-slate-400 capitalize whitespace-nowrap">{n}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.map((row, i) => (
+                        <tr key={i} className="bg-white border-b last:border-0 hover:bg-slate-50">
+                          {featureNames.map(n => (
+                            <td key={n} className="px-3 py-2 text-slate-600 font-mono">{row[n]}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
         {error && (
-          <Alert variant="error" icon={<AlertCircle className="w-4 h-4" />}>
+          <Alert variant="error" title="Validation Error">
             {error}
           </Alert>
         )}

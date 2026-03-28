@@ -119,3 +119,24 @@ def test_predict_batch_smoke(client, model_info_payload) -> None:
     assert "results" in payload
     assert len(payload["results"]) == 2
     assert payload["results"][0]["label"] in {"benign", "malignant"}
+
+
+def test_predict_batch_empty(client) -> None:
+    body = {"samples": []}
+    res = client.post("/predict/batch", json=body)
+    assert res.status_code == 200
+    assert res.json() == {"results": []}
+
+
+def test_predict_batch_wrong_feature_count(client, model_info_payload) -> None:
+    valid_features = _valid_features_from_model_info(model_info_payload)
+    body = {"samples": [valid_features, valid_features[:-1]]}
+    res = client.post("/predict/batch", json=body)
+    assert res.status_code == 400
+
+
+def test_predict_batch_too_many_samples(client, model_info_payload) -> None:
+    valid_features = _valid_features_from_model_info(model_info_payload)
+    body = {"samples": [valid_features] * 101}
+    res = client.post("/predict/batch", json=body)
+    assert res.status_code == 422  # Pydantic validation error for max_length

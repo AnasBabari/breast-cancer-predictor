@@ -329,31 +329,34 @@ def predict_batch(request: Request, body: BatchPredictRequest):
     if not MODEL_ARTIFACT:
         raise HTTPException(status_code=500, detail="Model not loaded")
 
+    if not body.samples:
+        return {"results": []}
+
     feature_names = list(MODEL_ARTIFACT["selected_feature_names"])
     pipeline = MODEL_ARTIFACT["pipeline"]
     classes = list(MODEL_ARTIFACT["classes"])
     target_names = list(MODEL_ARTIFACT["target_names"])
     class_to_label = {cls: target_names[int(cls)] for cls in classes}
 
-    results = []
+    # Validate feature counts for all samples first
     for features in body.samples:
         if len(features) != len(feature_names):
             raise HTTPException(status_code=400, detail="One or more samples have wrong feature count.")
 
-        x = np.array(features).reshape(1, -1)
-        try:
-            proba = pipeline.predict_proba(x)[0]
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Prediction failed: {e}") from e
+    # Vectorize — one predict_proba call for all samples
+    x_all = np.array(body.samples)
+    try:
+        all_proba = pipeline.predict_proba(x_all)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Batch prediction failed: {e}") from e
 
+    results = []
+    for i, proba in enumerate(all_proba):
         probabilities = {class_to_label[cls]: float(p) for cls, p in zip(classes, proba, strict=False)}
         label = max(probabilities, key=probabilities.get)
         probability = probabilities[label]
 
         confidence_level, confidence_note = _get_confidence(probability)
-        # Skip heavy SHAP for batch processing to keep it fast
-        # but keep basic coefficient factors if linear
-        top_factors, _ = _compute_explanations(MODEL_ARTIFACT, x, label)
 
         results.append({
             "label": label,
@@ -362,7 +365,7 @@ def predict_batch(request: Request, body: BatchPredictRequest):
             "feature_names": feature_names,
             "confidence_level": confidence_level,
             "confidence_note": confidence_note,
-            "top_factors": top_factors,
+            "top_factors": [],  # Skip heavy SHAP for batch
         })
 
     return {"results": results}

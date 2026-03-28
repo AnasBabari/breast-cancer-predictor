@@ -19,7 +19,10 @@ export function BatchResults({ results, originalData, onReset }) {
     const a = document.createElement("a");
     a.href = url;
     a.download = "prediction_results.csv";
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const malignantCount = results.filter(r => r.label.toLowerCase() === "malignant").length;
