@@ -40,7 +40,9 @@ class PredictRequest(BaseModel):
 
 
 class BatchPredictRequest(BaseModel):
-    samples: list[list[float]] = Field(..., max_length=100, description="List of samples, each a list of features.")
+    samples: list[list[float]] = Field(
+        ..., max_length=100, description="List of samples, each a list of features."
+    )
 
 
 class TopFactor(BaseModel):
@@ -341,7 +343,9 @@ def predict_batch(request: Request, body: BatchPredictRequest):
     # Validate feature counts for all samples first
     for features in body.samples:
         if len(features) != len(feature_names):
-            raise HTTPException(status_code=400, detail="One or more samples have wrong feature count.")
+            raise HTTPException(
+                status_code=400, detail="One or more samples have wrong feature count."
+            )
 
     # Vectorize — one predict_proba call for all samples
     x_all = np.array(body.samples)
@@ -351,8 +355,10 @@ def predict_batch(request: Request, body: BatchPredictRequest):
         raise HTTPException(status_code=500, detail=f"Batch prediction failed: {e}") from e
 
     results = []
-    for i, proba in enumerate(all_proba):
-        probabilities = {class_to_label[cls]: float(p) for cls, p in zip(classes, proba, strict=False)}
+    for _i, proba in enumerate(all_proba):
+        probabilities = {
+            class_to_label[cls]: float(p) for cls, p in zip(classes, proba, strict=False)
+        }
         label = max(probabilities, key=probabilities.get)
         probability = probabilities[label]
 
