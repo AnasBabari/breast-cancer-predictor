@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import joblib
 import numpy as np
@@ -149,10 +149,13 @@ def _compute_explanations(artifact: dict[str, Any], x: np.ndarray, predicted_lab
     # 1. Try SHAP (best for non-linear/tree models)
     if SHAP_EXPLAINER is not None:
         try:
-            if isinstance(SHAP_EXPLAINER, shap.KernelExplainer):
-                shap_vals = SHAP_EXPLAINER.shap_values(x_transformed)
+            # SHAP explainers expose slightly different APIs; treat this as a dynamic object.
+            explainer_obj = cast(Any, SHAP_EXPLAINER)
+            if hasattr(explainer_obj, "shap_values"):
+                shap_vals = explainer_obj.shap_values(x_transformed)
             else:
-                shap_vals = SHAP_EXPLAINER.shap_values(x_transformed)
+                explanation = explainer_obj(x_transformed)
+                shap_vals = cast(Any, explanation).values
 
             if isinstance(shap_vals, list):
                 val = shap_vals[mal_idx][0]
@@ -232,7 +235,13 @@ async def lifespan(app: FastAPI):
 # --- FastAPI App ---
 app = FastAPI(title="AI Breast Cancer Predictor Tool API", lifespan=lifespan)
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+def _rate_limit_exception_handler(request: Request, exc: Exception):
+    return _rate_limit_exceeded_handler(request, cast(RateLimitExceeded, exc))
+
+
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exception_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -307,7 +316,7 @@ def predict(request: Request, body: PredictRequest):
     class_to_label = {cls: target_names[int(cls)] for cls in classes}
     probabilities = {class_to_label[cls]: float(p) for cls, p in zip(classes, proba, strict=False)}
 
-    label = max(probabilities, key=probabilities.get)
+    label = max(probabilities, key=lambda key: probabilities[key])
     probability = probabilities[label]
 
     confidence_level, confidence_note = _get_confidence(probability)
@@ -359,7 +368,7 @@ def predict_batch(request: Request, body: BatchPredictRequest):
         probabilities = {
             class_to_label[cls]: float(p) for cls, p in zip(classes, proba, strict=False)
         }
-        label = max(probabilities, key=probabilities.get)
+        label = max(probabilities, key=lambda key: probabilities[key])
         probability = probabilities[label]
 
         confidence_level, confidence_note = _get_confidence(probability)
